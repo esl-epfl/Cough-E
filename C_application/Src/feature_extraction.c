@@ -10,19 +10,123 @@
 #include <audio_features.h>
 #include <imu_features.h>
 
-void fft_based_features(const int8_t *features_selector, const float *sig, int16_t len, int16_t fs, float *feats);
-void periodogram_based_features(const int8_t *features_selector, const float *sig, int16_t len, int16_t fs, float *feats);
-void mfcc_features(const int8_t *features_selector, const float *sig, int16_t len, float *feats);
-void mean_based_features(const int8_t *features_selector, const float *sig, int16_t len, float *feats);
 
-void imu_signal_features(const int8_t *features_selector, float *sig, int16_t len, float *feats);
-    
+//////////////////////////////////////////////////////////////////////////////////
+/*                      Local functions declaration                             */
+//////////////////////////////////////////////////////////////////////////////////
+
 
 /* 
     Given the features selector vector and two indexes (start and end), it
     returns 1 if feature_selector has at least a 1 in the range specified 
     by the indexes, 0 otherwise
 */
+int is_required(const int8_t *features_selector, uint16_t start_index, uint16_t end_index)
+
+
+/**
+    Computes the required FFT-based features of the audio signal
+
+    @param *features_selector   :   one-hot vector for which features to extract
+    @param *sig                 :   signal to process
+    @param len                  :   length of the signal
+    @param fs                   :   sampling frequency
+    @param *feats               :   array of extracted features
+*/
+void fft_based_features(const int8_t *features_selector, const float *sig, int16_t len, int16_t fs, float *feats);
+
+
+/**
+    Computes the required periodogram-based features of the audio signal
+
+    @param *features_selector   :   one-hot vector for which features to extract
+    @param *sig                 :   signal to process
+    @param len                  :   length of the signal
+    @param *feats               :   array of extracted features
+*/
+void periodogram_based_features(const int8_t *features_selector, const float *sig, int16_t len, int16_t fs, float *feats);
+
+
+/**
+    Computes the required MFCC features of the audio signal
+
+    @param *features_selector   :   one-hot vector for which features to extract
+    @param *sig                 :   signal to process
+    @param len                  :   length of the signal
+    @param *feats               :   array of extracted features
+*/
+void mfcc_features(const int8_t *features_selector, const float *sig, int16_t len, float *feats);
+
+
+/**
+    Computes the required Mel Spectrogram features of the audio signal
+
+    @param *features_selector   :   one-hot vector for which features to extract
+    @param *sig                 :   signal to process
+    @param len                  :   length of the signal
+    @param *feats               :   array of extracted features
+*/
+void mel_spectrogram_features(const int8_t *features_selector, const float *sig, int16_t len, float *feats);
+
+/**
+    Computes the required mean-based features of the audio signal
+
+    @param *features_selector   :   one-hot vector for which features to extract
+    @param *sig                 :   signal to process
+    @param len                  :   length of the signal
+    @param *feats               :   array of extracted features
+*/
+void mean_based_features(const int8_t *features_selector, const float *sig, int16_t len, float *feats);
+
+
+/**
+    Computes the required EEPD features of the audio signal
+
+    @param *features_selector   :   one-hot vector for which features to extract
+    @param *sig                 :   signal to process
+    @param len                  :   length of the signal
+    @param fs                   :   sampling frequency
+    @param *feats               :   array of extracted features
+*/
+void eepd_features(const int8_t *features_selector, const float *sig, int16_t len, int16_t fs, float *feats);
+
+
+/**
+    Process one IMU signal, checks which features are required and computes them
+
+    @param *features_selector   :   one-hot vector for which features to extract
+    @param *sig                 :   signal to process
+    @param len                  :   length of the signal
+    @param *feats               :   array of extracted features
+*/
+void imu_signal_features(const int8_t *features_selector, float *sig, int16_t len, float *feats);
+
+
+/**
+    This function triggers the feature extraction process for a specific IMU feature family.
+    First it checks the the features has to be computed, by means of the features_selector array.
+    Then it retrieves the proper data and it calls the feature extraction function.
+
+    The discrimination between different IMU signal here is done through the use of the two
+    input parameters "signal_idx" and "sig_feat_idx".
+
+    @param *features_selector   :   one-hot vector for which features to extract
+    @param signal               :   signal to process
+    @param len                  :   length of the signal
+    @param signal_idx           :   index of the specific IMU signal
+    @param sig_feat_idx         :   starting index of the features for the IMU signal inside the features_selector vector
+    @param *feats               :   array of extracted features
+*/
+void compute_imu_family(const int8_t *features_selector, const float signal[][Num_IMU_signals], int16_t len, int8_t signal_idx, int8_t sig_feat_idx, float *feats);
+
+//////////////////////////////////////////////////////////////////////////////////
+
+
+//////////////////////////////////////////////////////////////////////////////////
+/*                      Local functions definitions                             */
+//////////////////////////////////////////////////////////////////////////////////
+    
+
 int is_required(const int8_t *features_selector, uint16_t start_index, uint16_t end_index){
 
     for(uint16_t i=start_index; i<=end_index; i++){
@@ -34,10 +138,6 @@ int is_required(const int8_t *features_selector, uint16_t start_index, uint16_t 
 }
 
 
-
-/*
-    Computes the required FFT-based features of the audio signal
-*/
 void fft_based_features(const int8_t *features_selector, const float *sig, int16_t len, int16_t fs, float *feats){
     
     // FFT-dependent features' indexes
@@ -108,10 +208,6 @@ void fft_based_features(const int8_t *features_selector, const float *sig, int16
 }
 
 
-
-/*
-    Computes the required periodogram-based features of the audio signal
-*/
 void periodogram_based_features(const int8_t *features_selector, const float *sig, int16_t len, int16_t fs, float *feats){
 
     // Periodogram dependent features' indexes
@@ -167,10 +263,6 @@ void periodogram_based_features(const int8_t *features_selector, const float *si
 }
 
 
-
-/*
-    Computes the required MFCC features of the audio signal
-*/
 void mfcc_features(const int8_t *features_selector, const float *sig, int16_t len, float *feats){
 
     // 13 : 38 for the MFCCs features
@@ -246,9 +338,6 @@ void mel_spectrogram_features(const int8_t *features_selector, const float *sig,
 }
 
 
-/*
-    Computes the required mean-based features of the audio signal
-*/
 void mean_based_features(const int8_t *features_selector, const float *sig, int16_t len, float *feats){
 
     // 39 : 41 for the singular ones
@@ -286,10 +375,6 @@ void mean_based_features(const int8_t *features_selector, const float *sig, int1
 }
 
 
-
-/*
-    Computes the required EEPD features of the audio signal
-*/
 void eepd_features(const int8_t *features_selector, const float *sig, int16_t len, int16_t fs, float *feats){
 
     // 42 : 61 for the singular ones
@@ -309,9 +394,6 @@ void eepd_features(const int8_t *features_selector, const float *sig, int16_t le
 }
 
 
-/*
-    Process one IMU signal, checks which features are required and computes them
-*/
 void imu_signal_features(const int8_t *features_selector, float *sig, int16_t len, float *feats){
 
     if(features_selector[LINE_LENGTH]){
@@ -359,17 +441,6 @@ void imu_signal_features(const int8_t *features_selector, float *sig, int16_t le
 }
 
 
-/**
-    This function triggers the feature extraction process for a specific IMU feature family.
-    First it checks the the features has to be computed, by means of the features_selector array.
-    Then it retrieves the proper data and it calls the feature extraction function.
-
-    The discrimination between different IMU signal here is done through the use of the two
-    input parameters "signal_idx" and "sig_feat_idx".
-
-    signal_idx   : index of the IMU signal 
-    sig_feat_idx : starting index of the features for the IMU signal inside the features_selector vector
-*/
 void compute_imu_family(const int8_t *features_selector, const float signal[][Num_IMU_signals], int16_t len, int8_t signal_idx, int8_t sig_feat_idx, float *feats){
     
     // This array is filled with the proper signal samples 
@@ -391,7 +462,12 @@ void compute_imu_family(const int8_t *features_selector, const float signal[][Nu
 }
 
 
+//////////////////////////////////////////////////////////////////////////////////
 
+
+//////////////////////////////////////////////////////////////////////////////////
+/*                      Global functions definitions                            */
+//////////////////////////////////////////////////////////////////////////////////
 
 void audio_features(const int8_t *features_selector, const float *sig, int16_t len, int16_t fs, float *feats){
 
@@ -459,3 +535,6 @@ void imu_features(const int8_t *features_selector, const float sig[][Num_IMU_sig
     free(combo_signal);
 
 }
+
+
+//////////////////////////////////////////////////////////////////////////////////
