@@ -16,12 +16,16 @@
 //////////////////////////////////////////////////////////////////////////////////
 
 
-/* 
+/**
     Given the features selector vector and two indexes (start and end), it
     returns 1 if feature_selector has at least a 1 in the range specified 
     by the indexes, 0 otherwise
+
+    @param *features_selector   :   one-hot vector for which features to extract
+    @param start_index          :   starting index from which to check the `features_selector`
+    @param end_index            :   end index to check in the `features_selector`
 */
-int is_required(const int8_t *features_selector, uint16_t start_index, uint16_t end_index)
+int is_required(const int8_t *features_selector, uint16_t start_index, uint16_t end_index);
 
 
 /**
