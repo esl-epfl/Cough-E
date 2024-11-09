@@ -1,0 +1,14 @@
+# Configure experimental conditions (i.e. kinematic and audio noise conditions) for training and testing the model
+
+conditions_train: 
+  sounds: ["cough", "laugh", "talk", "deep_breathing", "throat_clearing"]
+  noises: ["nothing", "traffic", "music"]
+  movements: ["sit", "walk"]
+  trials: ["1", "2", "3"]
+
+conditions_test: 
+  sounds: ["cough", "laugh", "talk", "deep_breathing", "throat_clearing"]
+  noises: ["nothing", "traffic", "music", "someone_else_cough"]
+  movements: ["sit", "walk"]
+  trials: ["1", "2", "3"]
+

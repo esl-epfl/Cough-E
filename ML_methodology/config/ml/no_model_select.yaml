@@ -1,0 +1,28 @@
+# Configuration for running steps RFECV and later (i.e. to select the optimal number of features through nested recursive CV)
+steps:
+  extract_features: True
+  select_model: False
+  rfecv: True
+  feature_selection: True
+  train: True
+  test: True
+
+# Whether or not to pre-train audio network with COUGHVID dataset
+coughvid_ssl: True
+
+# Number of cross-validation splits for inner and outer loop
+n_splits_outer: 15
+n_splits_inner: 5
+
+# ML model pipeline options
+feature_scaling: False
+smote: False
+
+# List of models to test for the select_model step
+model_name: "XGB"
+
+#  RFECV step size: how many features to remove at each iteration. Smaller number --> fine-grained results but longer execution
+step_size: 10
+# Choose whether to keep the optimal number of features in RFECV or default to a smaller number (trading accuracy for energy efficienct). If true, define a n_features_opt config parameter
+overwrite_n_features_opt: False
+# n_features_opt: 100

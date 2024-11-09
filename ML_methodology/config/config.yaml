@@ -1,0 +1,35 @@
+# Define default configurations of sub-modules (ex. signal selection, feature extraction hyperparameters)
+defaults:
+  # Define Machine Learning pipeline and parameters
+  - ml: rfecv_onward
+  # Which signals to use to develop the model and their segmentation parameters
+  - signals: audio_only
+  # Specify feature extraction hyperparameters
+  - feature_extraction: mel_spectrogram
+  # Specify which experimental conditions to use to train and test the model (i.e. movement, background noise, etc)
+  - experiment_conditions: no_bystander_cough_training
+  # Parameters for event-based scoring
+  - scoring: default
+  # Parameters for postprocessing (i.e. cough segmentation)
+  - postprocessing: default
+  - _self_
+
+# Name of the experiment to add to the intermediate folder directory
+extra_info: "final_cv"
+
+# Input, intermediate, and output folder names
+data_folder: '/path/to/train/data/'
+test_data_folder: '/path/to/test/data/'
+coughvid_folder: '/path/to/coughvid/data/'
+coughvid_metadata: '/path/to/coughvid/data/metadata_compiled.csv'
+ext_feat_folder: "win_${signals.window_len}_ov_${signals.overlap_train}_fsAudio_${signals.fs_audio}_inmic_${signals.in_mic_sel}_outmic_${signals.out_mic_sel}_imu_${signals.imu_sel}_${extra_info}"
+
+# For testing only: define a model output probability decision threshold for the model to use for inference
+decision_threshold: 0.26
+
+
+# Define a sweeper to run through multiple configuration parameters at a time
+hydra:
+  sweeper:
+    params:
+      signals.window_len = 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 1.0

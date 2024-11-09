@@ -1,0 +1,29 @@
+# Configuration for running ML steps for feature selection onward, given a pre-defined number of optimal features (i.e. to limit computational complexity)
+steps:
+  extract_features: False
+  select_model: False
+  rfecv: False
+  feature_selection: True
+  train: True
+  test: True
+
+# Whether or not to pre-train audio network with COUGHVID dataset
+coughvid_ssl: True
+
+# Number of cross-validation splits for inner and outer loop
+n_splits_outer: 15
+n_splits_inner: 5
+
+# ML model pipeline options
+feature_scaling: False
+smote: False
+tune_model_hyps: False
+
+# List of models to test for the select_model step
+model_name: "XGB"
+
+
+# Choose whether to keep the optimal number of features in RFECV or default to a smaller number (trading accuracy for energy efficienct). If true, define a n_features_opt config parameter
+overwrite_n_features_opt: True
+n_features_opt: 84
+

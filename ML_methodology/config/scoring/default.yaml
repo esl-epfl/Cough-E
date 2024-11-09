@@ -1,0 +1,6 @@
+# Parameters for event-based cough detection scoring
+min_cough_duration: 0.1
+tolerance_start: 0.25
+tolerance_end: 0.25
+max_event_duration: 0.6
+min_duration_btwn_events: 0

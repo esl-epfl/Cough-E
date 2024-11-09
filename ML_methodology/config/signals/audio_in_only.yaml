@@ -1,0 +1,17 @@
+# Configuration for selecting only audio features from the body-facing (inner) microphone
+
+### Select which signals to extract features from ###
+out_mic_sel: False
+in_mic_sel: True
+imu_sel: False
+biodata_sel: True
+
+### Signal segmentation hyperparameters ###
+#  Window length (in seconds) to extract features from
+window_len: 0.8
+#  Window overlap (in percent) between one window and the next in training and testing
+overlap_train: 0
+overlap_test: 50
+#  Audio sampling frequencies (default = 16 kHz for audio; anything below that requires downsampling)
+#     Note: For now, it must be a value that when divided by 16000 produces an integer (ex. 8000, 4000, 2000)
+fs_audio: 8000

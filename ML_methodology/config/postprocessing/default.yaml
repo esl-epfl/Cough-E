@@ -1,0 +1,5 @@
+# Parameters for event-based cough detection postprocessing
+# Frequency to which audio signal is downsampled prior to postprocessing
+fs_downsample: 2000
+# Tolerance value for hysteresis comparator detecting cough ends
+cough_end_tolerance: 0.01
