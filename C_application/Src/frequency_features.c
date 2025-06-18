@@ -15,16 +15,14 @@
 #include <kiss_fftr.h>
 
 
-// Helper function for the RFFT
+/*
+    Helper function not callable externally.
+    This just computes the RFFT of the input signal and 
+    stores the Real and Imaginary parts in two separate arrays
+*/
 void _rfft(const float *sig, int16_t len, float *real, float *imag);
 
 
-/*
-    Computes the Real FFT of a time signal sig.
-    It stores the magnitudes, the frequencies and the sum of all the magnitudes inside
-    *mags, *freqs abd *sum_mags, respectively.
-    Note that also the sampling_frequency (fs) and the length (len) of the signal are required as inputs
-*/
 void compute_rfft(const float *sig, int16_t len, int16_t fs, float *mags, float *freqs, float *sum_mags){
 
     float *re = (float*)malloc(len * sizeof(float));
@@ -48,11 +46,7 @@ void compute_rfft(const float *sig, int16_t len, int16_t fs, float *mags, float 
 }
 
 
-/*
-    Helper function not callable externally.
-    This just computes the RFFT of the input signal and 
-    stores the Real and Imaginary parts in two separate arrays
-*/
+
 void _rfft(const float *sig, int16_t len, float *real, float *imag){
 
     kiss_fftr_cfg cfg = kiss_fftr_alloc(len, 0, 0, 0);
@@ -70,9 +64,7 @@ void _rfft(const float *sig, int16_t len, float *real, float *imag){
 }
 
 
-/*
-    Computes the periodogram of a signal using the Welch's method
-*/
+
 void compute_periodogram(const float *sig, int16_t len, int16_t fs, float *psd, float *freqs){
 
     float freq_step = ((float)fs / 2) / ( (float)NPERSEG / 2);  // the frequency step for eah bin 
@@ -147,10 +139,7 @@ void compute_periodogram(const float *sig, int16_t len, int16_t fs, float *psd, 
 }
 
 
-/*
-    Returns the spectral decrease computed from the magnitudes and the frequencies of
-    the spectrum of a signal
-*/
+
 float compute_spec_decrease(float* mags, float* freqs, int16_t len, float sum_mags){
 
     float sum = 0.0;
@@ -164,10 +153,6 @@ float compute_spec_decrease(float* mags, float* freqs, int16_t len, float sum_ma
 }
 
 
-/*
-    Returns the spectral slope computed from the magnitudes and the frequencies of
-    the spectrum of a signal
-*/
 float compute_spectral_slope(float *mags, float *freqs, int16_t len, float sum_mags){
 
     float mean_mag = sum_mags / len;
@@ -188,10 +173,7 @@ float compute_spectral_slope(float *mags, float *freqs, int16_t len, float sum_m
 }
 
 
-/*
-    Returns the spectral roll off computed from the magnitudes and the frequencies of
-    the spectrum of a signal
-*/
+
 float compute_rolloff(float *mags, float *freqs, int16_t len, float sum_mags){
 
     float rolloff_energy = 0.95 * sum_mags;
@@ -209,10 +191,7 @@ float compute_rolloff(float *mags, float *freqs, int16_t len, float sum_mags){
 }
 
 
-/*
-    Returns the spectral centroid computed from the magnitudes and the frequencies of
-    the spectrum of a signal
-*/
+
 float compute_centroid(float *mags, float *freqs, int16_t len, float sum_mags){
 
     float sum = 0.0;
@@ -225,11 +204,6 @@ float compute_centroid(float *mags, float *freqs, int16_t len, float sum_mags){
 }
 
 
-/*
-    Returns the spectral spread computed from the magnitudes and the frequencies of
-    the spectrum of a signal.
-    Note that this also requires the spectral centroid as an input
-*/
 float compute_spread(float *mags, float *freqs, int16_t len, float sum_mags, float centroid){
 
     float sum = 0.0;
@@ -242,11 +216,7 @@ float compute_spread(float *mags, float *freqs, int16_t len, float sum_mags, flo
 }
 
 
-/*
-    Returns the spectral kurtosis computed from the magnitudes and the frequencies of
-    the spectrum of a signal.
-    Note that this also requires the spectral centroid and the spectral spread as inputs
-*/
+
 float compute_kurt(float *mags, float *freqs, int16_t len, float sum_mags, float centroid, float spread){
 
     float spread_4 = spread * spread * spread * spread; // spread^4
@@ -261,11 +231,7 @@ float compute_kurt(float *mags, float *freqs, int16_t len, float sum_mags, float
 }
 
 
-/*
-    Returns the spectral skewness computed from the magnitudes and the frequencies of
-    the spectrum of a signal.
-    Note that this also requires the spectral centroid and the spectral spread as inputs
-*/
+
 float compute_skew(float *mags, float *freqs, int16_t len, float sum_mags, float centroid, float spread){
 
     float spread_3 = spread * spread * spread;
@@ -280,9 +246,6 @@ float compute_skew(float *mags, float *freqs, int16_t len, float sum_mags, float
 }
 
 
-/*
-    Returns the spectral flatness of the given signal
-*/
 float compute_flatness(float *x, int16_t len){
 
     float gmean = 0.0;  // geometric
@@ -300,9 +263,6 @@ float compute_flatness(float *x, int16_t len){
 }
 
 
-/*
-    Returns the standard deviation of the given signal
-*/
 float compute_std(float *x, int16_t len){
 
     return vect_std(x, len);
@@ -310,11 +270,6 @@ float compute_std(float *x, int16_t len){
 }
 
 float compute_spectral_entropy(float *x, int16_t len){
-
-    // // Sum each column of the spectrogram
-    // row_sum = vect_sum(&spectrogram[i*n_columns], n_columns);
-    // // Divide all the row's elements by the sum of the row
-    // vect_div_const(&spectrogram[i*n_columns], n_columns, row_sum);
 
     float *tmp = (float*)malloc(len * sizeof(float));
     float sum = vect_sum(x, len);
@@ -327,21 +282,14 @@ float compute_spectral_entropy(float *x, int16_t len){
 }
 
 
-/*
-    Returns the frequency at which the maximum psd is found
-*/
+
 float get_domiant_freq(float *psd, float *freqs, int16_t len){
     
     return freqs[vect_max_index(psd, len)];
 }
 
 
-/*
-    Computes the normalized power of each band.
-    It requires the psd, the frequencies and also the psd_selector, which is an array
-    of 1 or 0. 1 indicates that a specific band has to be computed. The bands
-    are defined by the "psd_bands" structure
-*/
+
 void normalized_bandpowers(float *psd, float *freqs, int16_t len, const int8_t *psd_selector, float *band_powers){
 
     float dx_freq = freqs[1] - freqs[0];
@@ -375,16 +323,8 @@ void normalized_bandpowers(float *psd, float *freqs, int16_t len, const int8_t *
     }
 }
 
-/*
-    Computes the MFCC coefficients of the given signal x
-    This function uses the STFT technique, therefore the MFCC are computed
-    for every frame in which the RFFT is computed.
-    Basically the output will be a matrix having, on i-th row, the i-th coefficient
-    for each signal frame.
-    The matrix is stored in a 1-Dimentional array, storing each row one after the other:
 
-    coeffs = [... ROW 0 ... | ... ROW 1 ... | ...]
-*/
+
 void mfcc_computation(const float *x, int16_t len, int16_t n_frames, float *coeffs){
 
     float *db_power = (float*)malloc((MEL_ROWS * n_frames) * sizeof(float));
@@ -427,37 +367,6 @@ void get_mfcc_features(const float *x, int16_t len, float *mean_mfcc, float *std
 
 }
 
-
-// void get_mel_spectrogram_features(const float *x, int16_t len, float *mean_mel_spectr, float *std_mel_spectr, float *max_mel_spectr, float *entropy_mel_spectr){
-
-//     int16_t padded_len = (2 * PAD_LEN) + len;                   // lenght of the padded signal
-//     int16_t n_frames = ((padded_len - N_FFT) / HOP_LEN) + 1;    // number of frames for the stft
-
-//     float *spectrogram = (float*)malloc((MEL_ROWS * n_frames) * sizeof(float));
-//     memset(spectrogram, 0.0, (MEL_ROWS * n_frames)*sizeof(float));
-
-//     // Get the spectrogram
-//     mel_spectrogram(x, len, n_frames, spectrogram);
-
-//     // Stores the dB of the mel spectrogram
-//     float *mel_dB = (float*)malloc((MEL_ROWS * n_frames) * sizeof(float));
-
-//     // Convert the power of the spectrogram in dB
-//     power_to_dB(spectrogram, (MEL_ROWS * n_frames), mel_dB);
-
-//     // Computes the entropy of the spectrogram
-//     entropy(spectrogram, MEL_ROWS, n_frames, entropy_mel_spectr);
-
-//     // Computes the mean, std and maximum value of each MEL bin
-//     for(int8_t i=0; i<MEL_ROWS; i++){
-//         mean_mel_spectr[i] = vect_mean(&mel_dB[i*n_frames], n_frames);
-//         std_mel_spectr[i] = vect_std(&mel_dB[i*n_frames], n_frames);
-//         max_mel_spectr[i] = vect_max_value(&mel_dB[i*n_frames], n_frames);
-//     }
-
-//     free(spectrogram);
-//     free(mel_dB);
-// }
 
 void get_mel_spectrogram_features(const float *x, int16_t len, uint8_t *idx_needed, uint8_t n_mels_needed, float *mean_mel_spectr, float *std_mel_spectr, float *max_mel_spectr, float *entropy_mel_spectr){
 

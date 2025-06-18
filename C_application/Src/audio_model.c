@@ -4,6 +4,9 @@
 
 #include <audio_model.h>
 
+/// @brief Computes the sigmoid value of a given score
+/// @param score    :   the score for which to compute the sigmoid
+/// @return The resulting value
 float _audio_sigmoid(float score){
     if(score < 0.0){
         float z = expf(score);
@@ -11,6 +14,8 @@ float _audio_sigmoid(float score){
     }
     return (1.0 / (1.0 + expf(-score)));
 }
+
+
 
 float audio_predict(float *feats){
 

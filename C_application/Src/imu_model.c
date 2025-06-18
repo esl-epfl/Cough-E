@@ -42,6 +42,5 @@ float imu_predict(float *feats){
     }
 
     float res = _imu_sigmoid(score);
-    // printf("[%f -\t%f]\n", (1.0-res), res);
     return res;
 }

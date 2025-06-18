@@ -36,15 +36,8 @@ void _cmplx_mag(kiss_fft_cpx *x, int16_t len, float *res){
     }
 }
 
-/*
-    Computes the power of the signal using the STFT method.
 
-    The final result will be a matrix stored in the 1D array res.
-    Note that the matrix is stored columns by column, one after the other:
-    res = [.... COLUMN 0 ....|.... COLUMN 1 ....|....].
-    So compared to the `librosa` implementation on python (`stft()`), the first 1025
-    elements here correspond to the first column of the python result.
-*/
+
 void stft(const float *x, int16_t len, int16_t n_frames, float *res){
 
     // apply padding
@@ -94,10 +87,9 @@ void stft(const float *x, int16_t len, int16_t n_frames, float *res){
     free(fft_res);
 }
 
-/*
-    Computes the melodic spectrogram by using the STFT method
-    and by multiplying it a mel_basis matrix
-*/
+
+
+
 void mel_spectrogram_full(const float *x, int16_t len, int16_t n_frames, float *res){
 
     // STFT
@@ -150,10 +142,9 @@ void mel_spectrogram(const float *x, int16_t len, int16_t n_frames, uint8_t *idx
 }
 
 
-/*
-    Converts the input array of powers to dB and stores the
-    result into res array
-*/
+
+
+
 void power_to_dB(float *x, int16_t len, float *res){
     float sample = 0.0;
     for(int16_t i=0; i<len; i++){
@@ -173,9 +164,11 @@ void power_to_dB(float *x, int16_t len, float *res){
     }
 }
 
-/*
-    Computes the DCT on a single dimentional array
-*/
+
+/// @brief Computes the Direct Cosine Transform on a single dimentional array
+/// @param *x   pointer to the input signal
+/// @param len  lenght
+/// @param *y   pointer to the result
 void _dct_linear(float *x, int16_t len, float *y){
 
     float sum = 0.0;
@@ -198,15 +191,8 @@ void _dct_linear(float *x, int16_t len, float *y){
     y[0] = y[0] * sqrtf(1.0 / (4 * len));
 }
 
-/*
-    Computes the DCT (Discrete Cosine Transform) on the input matrix and 
-    stores the result in the output matrix.
-    
-    Both input and output matrices are stored as 1D arrays.
-    
-    The matrix is stored on a row by row basis:
-    x = [... ROW 0 ... | ... ROW 1 ... | ....]
-*/
+
+
 void dct_matrix(float *x, int16_t rows, int16_t cols, float *y){
 
     float *column = (float*)malloc(rows * sizeof(float));
@@ -231,16 +217,7 @@ void dct_matrix(float *x, int16_t rows, int16_t cols, float *y){
 }
 
 
-/**
- * Computes the entropy of the given spectrogram.
- * 
- * @param *spectrogram  :   pointer to the spectrogram. It has to be
- *                          a matrix store row by row in a linear array
- * @param n_rows        :   number of rows of the spectrogram matrix
- * @param n_columns     :   number of columns of the spectrogram matrix
- * @param *res          :   array where to store the resulting entropy. It should
- *                          be an array of `n_rows` elements
-*/
+
 void entropy(float *spectrogram, int16_t n_rows, int16_t n_columns, float *res){
 
     // Store the sum of each row of the spectrogram

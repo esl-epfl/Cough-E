@@ -14,7 +14,9 @@
 
 int16_t _find_peaks(float *x, int16_t len);
 
-// Returns the max value of an array 
+
+
+
 float get_max(float *sig, int16_t len){
     
     float max = sig[0];
@@ -28,7 +30,7 @@ float get_max(float *sig, int16_t len){
 }
 
 
-// Subtracts to each sample of a signal its mean
+
 void sub_mean(const float *sig, float *res, int16_t len){
 
     float mean = vect_mean(sig, len);
@@ -36,7 +38,7 @@ void sub_mean(const float *sig, float *res, int16_t len){
     sub_constant(sig, len, mean, res);
 }
 
-// Returns the RMS of the input signal
+
 float get_rms(float *sig, int16_t len){
     float sum = 0;
     for(int16_t i=0; i<len; i++){
@@ -45,7 +47,9 @@ float get_rms(float *sig, int16_t len){
     return sqrtf(sum / len);
 }
 
-// Computes the Zero Crossing Rate
+
+
+
 float compute_zrc(float *sig, int16_t len){
 
     int sum = 0;
@@ -93,7 +97,9 @@ int16_t _find_peaks(float *x, int16_t len){
     return npeaks;
 }
 
-// Computes the EEPD features
+
+
+
 void eepd(const float *sig, int16_t len, int16_t fs, const int8_t *select, int16_t *res){
 
     float *interm = (float*)malloc(len * sizeof(float));    // to store the intermediate result between the first and the second filter 

@@ -38,24 +38,6 @@
 #define PSD_BAND_3_START 160
 #define PSD_BAND_3_END 350
 
-// #define PSD_BAND_4_START 1700
-// #define PSD_BAND_4_END 2100
-
-// #define PSD_BAND_5_START 2100
-// #define PSD_BAND_5_END 2400
-
-// #define PSD_BAND_6_START 2500
-// #define PSD_BAND_6_END 3000
-
-// #define PSD_BAND_7_START 3000
-// #define PSD_BAND_7_END 3500
-
-// #define PSD_BAND_8_START 3500
-// #define PSD_BAND_8_END 4200
-
-// #define PSD_BAND_9_START 4900
-// #define PSD_BAND_9_END 5300
-
 // struct to store the limits of each PSD band
 typedef struct band {
     int16_t start;

@@ -6,9 +6,7 @@
 #include <filters_parameters.h>
 
 
-/*
-    Applies a linear filter to the signal. The filter is defined
-*/
+
 void linear_filer(float *sig, int len, const float *b, const float *a, float *zi, float *res){
 
     float sig_1 = 0.0;
@@ -41,20 +39,6 @@ void linear_filer(float *sig, int len, const float *b, const float *a, float *zi
 }
 
 
-/*
-    Applies a filter to the signal.
-    The filter has transfer function with coefficients b and a, passed as parameters
-    The way this filter is implemented is compliant with the filtfilt() function
-    of the python package "scipy".
-
-    b, a and zi are respectively the b, a coefficients of the filter and
-    its initial state.
-
-    The main steps are:
-    - padding of the signal
-    - forward filtering
-    - backward filtering
-*/
 void filtfilt(const float *sig, int len, const float *b, const float* a, const float *zi, float *res){
 
     // PADDING //

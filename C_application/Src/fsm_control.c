@@ -13,6 +13,7 @@ void init_state(){
 #endif
 
 fsm_state.model_cls_out = NON_COUGH_OUT;
+fsm_state.timestamp_last_out = 0.0;
 fsm_state.time_from_last_out = 0.0;
 fsm_state.time_start_wind = 0.0;
 fsm_state.time_start_last_wind = 0.0;
@@ -45,7 +46,7 @@ void update(){
 
             fsm_state.n_winds_aud++;
             fsm_state.time_from_last_out = fsm_state.time_start_wind + WIND_LEN_AUD - fsm_state.timestamp_last_out;
-            
+
             #ifdef RUN_MIXED
             // Max number of windows to be processed by audio reached, switch back to IMU
             if(fsm_state.n_winds_aud >= N_MAX_WIND_AUD){
@@ -130,35 +131,3 @@ uint32_t get_idx_window(){
         return (uint32_t)(fsm_state.time_start_wind * AUDIO_FS);
     }
 }
-
-
-
-
-// #include <stdio.h>
-// int main(){
-
-//     init_state();
-
-
-//     printf("Model :%d\n", fsm_state.model);
-//     printf("Time: %f\n", fsm_state.time_start_wind);
-//     printf("Idx wind: %d\n", get_idx_window());
-//     printf("\n");
-
-//     fsm_state.time_start_wind += IMU_STEP_SEC;
-
-//     printf("Model :%d\n", fsm_state.model);
-//     printf("Time: %f\n", fsm_state.time_start_wind);
-//     printf("Idx wind: %d\n", get_idx_window());
-//     printf("\n");
-
-//     fsm_state.model = AUDIO_MODEL;
-    
-
-//     printf("Model :%d\n", fsm_state.model);
-//     printf("Time: %f\n", fsm_state.time_start_wind);
-//     printf("Idx wind: %d\n", get_idx_window());
-//     printf("\n");
-
-
-// }

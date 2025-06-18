@@ -47,6 +47,8 @@ static const int8_t audio_bio_feats_selector[Number_bio_features] = {
 
 /**
  * Returns the model confidence for the current window to be COUGH
+ * 
+ * @param *feat 	:	pointer to the features to be processed
 */
 float audio_predict(float *feat);
 

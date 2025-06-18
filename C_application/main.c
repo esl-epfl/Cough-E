@@ -76,7 +76,7 @@ int main(){
     // Number of peaks for which the model confidence is above the threshold
     uint16_t n_idxs_above_th = 0;
 
-    int debug_cnt = 0;
+    int debug_cnt = 0;  // Used to count the iterations and eventually stop
 
     init_state();
 
@@ -90,7 +90,9 @@ int main(){
         if(fsm_state.model == IMU_MODEL){
 
             if(idx_start_window >= IMU_LEN){
-                break;
+                // printf("RESET\n");
+                init_state();
+                idx_start_window = get_idx_window();
             }
 
             // Extract IMU features
@@ -99,6 +101,7 @@ int main(){
             // Fill the array of final imu features to feed into the IMU model
             for(int16_t j=0; j<N_IMU_FEATURES; j++){
                 features_imu_model[j] = imu_feature_array[indexes_imu_f[j]];
+                // printf("[%d]\t%f\n", j, features_imu_model[j]);
             }
             if(imu_bio_feats_selector[0] == 1){
                 features_imu_model[N_IMU_FEATURES] = gender;
@@ -109,7 +112,8 @@ int main(){
 
             // Predict with the IMU model
             imu_proba = imu_predict(features_imu_model);
-
+            // printf("IMU P: %f\n", imu_proba);
+            
             // Update the output of the FSM
             if(imu_proba>=IMU_TH){
                 fsm_state.model_cls_out = COUGH_OUT;
@@ -121,6 +125,8 @@ int main(){
 
             if(idx_start_window >= AUDIO_LEN){
                 break;
+                init_state();
+                idx_start_window = get_idx_window();
             }
 
             // Extract AUDIO features
@@ -138,6 +144,7 @@ int main(){
             }
 
             audio_proba = audio_predict(features_audio_model);
+            // printf("AUDIO P: %f\n", audio_proba);
 
             // Update the output of the FSM
             if(audio_proba >= AUDIO_TH){
@@ -209,6 +216,10 @@ int main(){
         }
 
         debug_cnt++;
+
+        if(debug_cnt == 100){
+            break;
+        }
 
     }
 

@@ -23,7 +23,7 @@ static const int8_t imu_features_selector[Number_IMU_Features] = {
 
 static const int8_t imu_bio_feats_selector[Number_bio_features] = {
     1,  // Gender 
-    0   // BMI
+    1   // BMI
 };
 
 

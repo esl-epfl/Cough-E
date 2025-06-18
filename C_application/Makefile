@@ -10,18 +10,32 @@ INC 		= 	$(foreach d, $(INC_DIRS), -I$d)
 
 MATH 		= 	-lm
 
+COMP_STRING = 	" |++++++++++++++++++++++++++++++++|\n"
+COMP_STRING +=  "|            Cough-E             |\n"
+COMP_STRING += 	"|      Compilation successful!   |\n"
+COMP_STRING += 	"|++++++++++++++++++++++++++++++++|\n"
+COMP_STRING += 	"|              ( (               |\n"
+COMP_STRING += 	"|              ) )               |\n"
+COMP_STRING += 	"|           ........             |\n"
+COMP_STRING += 	"|           |      |]            |\n"
+COMP_STRING += 	"|           \      /             |\n"
+COMP_STRING += 	"|            '----'              |\n"
+COMP_STRING += 	"|++++++++++++++++++++++++++++++++|\n"
+
+# @echo "Compilation terminated successfully! ☕\n"
+# @echo "Running with command:"
+
+
+EXEC_STRING =	" |++++++++++++++++++++++++++++++++|\n" 
+EXEC_STRING +=	"|     Start of execution...      |\n" 
+EXEC_STRING +=	"|++++++++++++++++++++++++++++++++|\n" 
+
 
 all:
 	$(CC) -Wall -o $(APP) main.c $(SRC) $(INC) $(MATH) -O3 -g
-	@echo "Compilation terminated successfully! ☕\n"
+	@echo $(COMP_STRING)
+
 
 run: all
-	@echo "Running with command:"
-	./$(APP)
-
-
-profile:
-	rm profile gmon.out
-	$(CC) -Wall -pg -o profile main.c $(SRC) $(INC) $(MATH) -O3
-	./profile
-	gprof profile | gprof2dot | dot -Tpng -o prof_graph.png
+	@echo $(EXEC_STRING)
+	@./$(APP)
