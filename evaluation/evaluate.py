@@ -31,14 +31,14 @@ import re
 import argparse
 import sys
 import csv
-from pathlib import Path
 from datetime import datetime
 
-# Add parent path for imports
+# Add paths for imports
 sys.path.insert(0, os.path.dirname(__file__))
 from transform_dataset import (
     transform_recording, transform_all, make_recording_suffix,
-    AUDIO_FS_TARGET, IMU_FS, SOUNDS, NOISES, MOVEMENTS, TRIALS
+    AUDIO_FS_TARGET, IMU_FS, SOUNDS, NOISES, MOVEMENTS, TRIALS,
+    FS_IMU
 )
 
 # Scoring parameters matching ML_methodology/config/scoring/default.yaml
@@ -79,68 +79,21 @@ def restore_main_h():
 
 def update_main_h(audio_relpath, imu_relpath, bio_relpath):
     """
-    Rewrite main.h to include the specified input data headers.
+    Replace the 3 input data #include lines in main.h.
     Relpaths are relative to input_data/ (e.g. "{subj_id}/audio_input_{suffix}.h").
     """
-    main_h_content = f"""#ifndef _MAIN_H_
-#define _MAIN_H_
+    with open(MAIN_H_PATH, 'r') as f:
+        content = f.read()
 
-#include <inttypes.h>
+    content = re.sub(r'#include <input_data/.*audio_input.*\.h>',
+                     f'#include <input_data/{audio_relpath}>', content)
+    content = re.sub(r'#include <input_data/.*imu_input.*\.h>',
+                     f'#include <input_data/{imu_relpath}>', content)
+    content = re.sub(r'#include <input_data/.*bio_input.*\.h>',
+                     f'#include <input_data/{bio_relpath}>', content)
 
-//////////////////////////////////////
-/* Model to be used                 */
-//////////////////////////////////////
-#include <audio_model.h>
-#include <imu_model.h>
-//////////////////////////////////////
-
-
-//////////////////////////////////////
-/* Input data                       */
-// ///////////////////////////////////
-#include <input_data/{audio_relpath}>
-#include <input_data/{imu_relpath}>
-#include <input_data/{bio_relpath}>
-//////////////////////////////////////
-
-
-#include <audio_features.h>
-#include <imu_features.h>
-
-
-/* Threshold for the audio model */
-#define AUDIO_TH    0.3
-
-/* Threshold for the imu model */
-#define IMU_TH    0.05
-
-// Defines (in seconds) how often to provide the final estimation (execute post-processing)
-#define TIME_DEADLINE_OUTPUT    1.5
-
-// Maximum number of consecutive windows to be run by AUDIO model
-#define N_MAX_WIND_AUD  4
-
-////////////////////////////////////////////////
-/* Define if to run in multi or unimodal mode */
-////////////////////////////////////////////////
-
-// Execute in multimodal mode, using both modalities cooperating
-#define RUN_MIXED
-
-#ifndef RUN_MIXED
-    // #define RUN_ONLY_AUD        // Use only the audio modality
-
-    #ifndef RUN_ONLY_AUD
-        #define RUN_ONLY_IMU    // Use only the imu modality
-    #endif
-#endif
-////////////////////////////////////////////////
-
-
-#endif
-"""
     with open(MAIN_H_PATH, 'w') as f:
-        f.write(main_h_content)
+        f.write(content)
 
 
 # ──────────────────────────────────────────────
@@ -148,8 +101,6 @@ def update_main_h(audio_relpath, imu_relpath, bio_relpath):
 # ──────────────────────────────────────────────
 
 def compile_c_app():
-    subprocess.run(["make", "-C", C_APP_DIR, "clean"],
-                   capture_output=True, text=True)
     result = subprocess.run(["make", "-C", C_APP_DIR],
                             capture_output=True, text=True)
     if result.returncode != 0:
@@ -232,32 +183,31 @@ def load_ground_truth(dataset_path, subj_id, trial, mov, noise, sound):
 
 
 def get_recording_duration(dataset_path, subj_id, trial, mov, noise, sound):
-    import pandas as pd
     imu_path = os.path.join(dataset_path, subj_id,
                             f'trial_{trial}', f'mov_{mov}',
                             f'background_noise_{noise}', sound,
                             'imu.csv')
     if os.path.exists(imu_path):
-        imu_df = pd.read_csv(imu_path)
-        return len(imu_df) / IMU_FS
+        with open(imu_path, 'r') as f:
+            n_lines = sum(1 for _ in f) - 1  # subtract header
+        return n_lines / IMU_FS
     return 0.0
 
 
-def create_binary_mask(events, duration, fs=IMU_FS):
+def create_binary_mask(events, duration):
     """
-    Create a binary mask array from event list, matching ML methodology's
-    get_ground_truth_regions() function.
+    Create a binary mask from event list.
+    Mirrors edge_ai.get_ground_truth_regions() — cannot import directly
+    due to relative imports and heavy dependencies in edge_ai.py.
     """
-    n_samples = int(round(duration * fs))
+    n_samples = int(round(duration * FS_IMU))
     mask = np.zeros(n_samples)
     for start, end in events:
-        start_idx = int(round(start * fs))
-        end_idx = int(round(end * fs))
-        start_idx = max(0, min(start_idx, n_samples))
-        end_idx = max(0, min(end_idx, n_samples))
-        mask[start_idx:end_idx] = 1
-        if start_idx > 0:
-            mask[start_idx - 1] = 0
+        s = min(int(round(start * FS_IMU)), n_samples)
+        e = min(int(round(end * FS_IMU)), n_samples)
+        mask[s:e] = 1
+        if s > 0 and s < n_samples:
+            mask[s - 1] = 0
     return mask
 
 
@@ -267,14 +217,14 @@ def create_binary_mask(events, duration, fs=IMU_FS):
 
 def score_recording(gt_events, pred_events, duration):
     """
-    Compute event-based scoring, mirroring test.py line 371.
+    Compute event-based scoring.
 
     Returns dict with:
         Event-based (timescoring.EventScoring): tp_evt, fp_evt, fn_evt, se_evt, ppv_evt, f1_evt
     """
-    fs = IMU_FS
-    gt_mask = create_binary_mask(gt_events, duration, fs)
-    pred_mask = create_binary_mask(pred_events, duration, fs)
+    fs = FS_IMU
+    gt_mask = create_binary_mask(gt_events, duration)
+    pred_mask = create_binary_mask(pred_events, duration)
 
     from timescoring.annotations import Annotation
     from timescoring import scoring
@@ -478,7 +428,6 @@ def print_results(results, aggregate):
     print("EVALUATION RESULTS")
     print("=" * 70)
 
-    # Per-subject breakdown
     subjects = sorted(set(r["subject"] for r in results))
     per_subject = {}
     for subj in subjects:
@@ -490,7 +439,6 @@ def print_results(results, aggregate):
               f"F1={a['f1_evt']:.3f}  FP/hr={a['fphr_evt']:.1f}  "
               f"(TP={a['tp_evt']} FP={a['fp_evt']} FN={a['fn_evt']})")
 
-    # Overall
     print(f"\n{'=' * 70}")
     print(f"OVERALL ({aggregate['total_recordings']} recordings, "
           f"{aggregate['total_duration_hrs']:.3f} hrs)")
@@ -501,11 +449,23 @@ def print_results(results, aggregate):
     print(f"    F1    = {aggregate['f1_evt']:.4f}")
     print(f"    FP/hr = {aggregate['fphr_evt']:.1f}")
     print(f"    TP={aggregate['tp_evt']}  FP={aggregate['fp_evt']}  FN={aggregate['fn_evt']}")
-
     print(f"\n  Python baseline (event-based): SE=0.71  PR=0.86  F1=0.78")
     print("=" * 70)
 
     return per_subject
+
+
+def build_per_subject_json(per_subject):
+    result = {}
+    for subj, a in per_subject.items():
+        result[subj] = {
+            "event_based": {
+                "SE": round(a["se_evt"], 4), "PR": round(a["pr_evt"], 4),
+                "F1": round(a["f1_evt"], 4), "FP_hr": round(a["fphr_evt"], 1),
+                "TP": a["tp_evt"], "FP": a["fp_evt"], "FN": a["fn_evt"],
+            },
+        }
+    return result
 
 
 # ──────────────────────────────────────────────
@@ -539,18 +499,8 @@ def cmd_run(args):
     csv_path = os.path.join(output_dir, "results.csv")
     save_results_csv(results, csv_path)
 
-    per_subj_json = {}
-    for subj, a in per_subject.items():
-        per_subj_json[subj] = {
-            "event_based": {
-                "SE": round(a["se_evt"], 4), "PR": round(a["pr_evt"], 4),
-                "F1": round(a["f1_evt"], 4), "FP_hr": round(a["fphr_evt"], 1),
-                "TP": a["tp_evt"], "FP": a["fp_evt"], "FN": a["fn_evt"],
-            },
-        }
-
     json_path = os.path.join(output_dir, "summary.json")
-    save_summary_json(aggregate, json_path, per_subj_json)
+    save_summary_json(aggregate, json_path, build_per_subject_json(per_subject))
 
 
 def cmd_aggregate(args):
@@ -560,17 +510,8 @@ def cmd_aggregate(args):
     per_subject = print_results(results, aggregate)
 
     output_dir = os.path.dirname(args.csv) or "."
-    per_subj_json = {}
-    for subj, a in per_subject.items():
-        per_subj_json[subj] = {
-            "event_based": {
-                "SE": round(a["se_evt"], 4), "PR": round(a["pr_evt"], 4),
-                "F1": round(a["f1_evt"], 4), "FP_hr": round(a["fphr_evt"], 1),
-                "TP": a["tp_evt"], "FP": a["fp_evt"], "FN": a["fn_evt"],
-            },
-        }
     json_path = os.path.join(output_dir, "summary.json")
-    save_summary_json(aggregate, json_path, per_subj_json)
+    save_summary_json(aggregate, json_path, build_per_subject_json(per_subject))
 
 
 def cmd_full(args):

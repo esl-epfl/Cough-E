@@ -1,0 +1,7 @@
+# Python
+__pycache__/
+*.pyc
+*.pyo
+
+# C build
+C_application/build/
