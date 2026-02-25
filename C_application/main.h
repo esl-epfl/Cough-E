@@ -6,8 +6,8 @@
 //////////////////////////////////////
 /* Model to be used                 */
 //////////////////////////////////////
-#include <audio_model.h>            
-#include <imu_model.h>              
+#include <audio_model.h>
+#include <imu_model.h>
 //////////////////////////////////////
 
 
