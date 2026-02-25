@@ -1,9 +1,7 @@
 """
 Transform public dataset recordings into C header files for the Cough-E C application.
 
-Converts WAV audio + CSV IMU + JSON biodata from the public dataset into the exact
-.h format expected by the C application's input_data/ directory.
-
+Converts WAV audio + CSV IMU + JSON biodata from the public dataset into the .h format expected by the C application's input_data/ directory.
 Files are organized into per-subject subfolders: input_data/{subj_id}/
 
 Usage:
@@ -12,24 +10,34 @@ Usage:
 """
 
 import numpy as np
-from scipy.io import wavfile
-from scipy.signal import decimate
-import pandas as pd
 import json
 import os
 import argparse
 
-# Constants matching C application expectations
-AUDIO_FS_ORIGINAL = 16000
+# Import helpers directly from ML_methodology/src (bypassing __init__.py which pulls heavy deps)
+import importlib.util
+_helpers_path = os.path.join(os.path.dirname(__file__), '..', 'ML_methodology', 'src', 'helpers.py')
+_spec = importlib.util.spec_from_file_location("helpers", _helpers_path)
+_helpers = importlib.util.module_from_spec(_spec)
+_spec.loader.exec_module(_helpers)
+load_audio = _helpers.load_audio
+load_imu = _helpers.load_imu
+FS_AUDIO = _helpers.FS_AUDIO
+FS_IMU = _helpers.FS_IMU
+Sound = _helpers.Sound
+Noise = _helpers.Noise
+Movement = _helpers.Movement
+Trial = _helpers.Trial
+
+# Constants
 AUDIO_FS_TARGET = 8000
-IMU_FS = 100
-AUDIO_NORM_DIVISOR = 1 << 29  # 2^29, matches ML_methodology/src/helpers.py load_audio()
+IMU_FS = FS_IMU  # 100 Hz
 
 # Experimental conditions to process (matches no_bystander_cough_training test conditions)
-SOUNDS = ["cough", "laugh", "talk", "deep_breathing", "throat_clearing"]
-NOISES = ["nothing", "traffic", "music", "someone_else_cough"]
-MOVEMENTS = ["sit", "walk"]
-TRIALS = ["1", "2", "3"]
+SOUNDS = [s.value for s in Sound]
+NOISES = [n.value for n in Noise]
+MOVEMENTS = [m.value for m in Movement]
+TRIALS = [t.value for t in Trial]
 
 
 def make_recording_suffix(subj_id, trial, mov, noise, sound):
@@ -172,24 +180,20 @@ def transform_recording(subj_id, trial, mov, noise, sound, dataset_path, output_
         bio_file = f"bio_input_{subj_id}.h"
         return suffix, f"{subj_id}/{audio_file}", f"{subj_id}/{imu_file}", f"{subj_id}/{bio_file}"
 
-    # Load and downsample audio (outward-facing mic only, matching C app)
-    wav_path = os.path.join(rec_path, 'outward_facing_mic.wav')
-    if not os.path.exists(wav_path):
+    # Load and downsample audio using helpers.py load_audio()
+    try:
+        audio_air, _ = load_audio(dataset_path + '/', subj_id, AUDIO_FS_TARGET,
+                                  trial, mov, noise, sound)
+    except Exception:
         return None
-    fs, audio_raw = wavfile.read(wav_path)
-    assert fs == AUDIO_FS_ORIGINAL, f"Expected {AUDIO_FS_ORIGINAL}Hz, got {fs}Hz"
 
-    decimation_ratio = AUDIO_FS_ORIGINAL // AUDIO_FS_TARGET
-    audio = decimate(audio_raw.astype(np.float64), decimation_ratio)
-    audio = audio / AUDIO_NORM_DIVISOR
-
-    # Load IMU
-    imu_path = os.path.join(rec_path, 'imu.csv')
-    if not os.path.exists(imu_path):
+    # Load IMU using helpers.py load_imu()
+    imu = load_imu(dataset_path + '/', subj_id, trial, mov, noise, sound)
+    if imu == 0:
         return None
-    imu_df = pd.read_csv(imu_path)
-    imu_data = imu_df[['Accel x', 'Accel y', 'Accel z',
-                        'Gyro Y', 'Gyro P', 'Gyro R']].values.astype(np.float64)
+    # Stack in same order as dataset_gen.py: [x, y, z, Y, P, R]
+    imu_data = np.stack((imu.x, imu.y, imu.z, imu.Y, imu.P, imu.R), axis=1)
+    audio = audio_air
 
     # Align durations: truncate both to the shorter signal's duration
     # Rule: IMU_LEN * (AUDIO_FS / IMU_FS) = AUDIO_LEN

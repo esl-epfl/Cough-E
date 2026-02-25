@@ -16,7 +16,7 @@
 // ///////////////////////////////////
 #include <input_data/audio_input_55502_w0_9wnds.h>
 #include <input_data/imu_input_55502_w0_9wnds.h>
-#include <input_data/bio_input_55502.h>
+#include <input_data/55502/bio_input_55502.h>
 //////////////////////////////////////
 
 
