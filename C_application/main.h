@@ -6,8 +6,8 @@
 //////////////////////////////////////
 /* Model to be used                 */
 //////////////////////////////////////
-#include <audio_model.h>            
-#include <imu_model.h>              
+#include <audio_model.h>
+#include <imu_model.h>
 //////////////////////////////////////
 
 
@@ -41,7 +41,7 @@
 ////////////////////////////////////////////////
 
 // Execute in multimodal mode, using both modalities cooperating
-// #define RUN_MIXED
+#define RUN_MIXED
 
 #ifndef RUN_MIXED
     // #define RUN_ONLY_AUD        // Use only the audio modality

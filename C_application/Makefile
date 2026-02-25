@@ -1,9 +1,10 @@
 
 CC 			=	gcc
 APP 		= 	cough-e
+BUILD_DIR 	= 	build
 
 SRC_DIRS 	= 	Src kiss_fftr
-SRC 		= 	$(foreach c, $(SRC_DIRS), $c/*)
+SRC 		= 	$(foreach c, $(SRC_DIRS), $(wildcard $c/*.c))
 
 INC_DIRS 	= 	Inc ./ kiss_fftr
 INC 		= 	$(foreach d, $(INC_DIRS), -I$d)
@@ -32,10 +33,14 @@ EXEC_STRING +=	"|++++++++++++++++++++++++++++++++|\n"
 
 
 all:
-	$(CC) -Wall -o $(APP) main.c $(SRC) $(INC) $(MATH) -O3 -g
+	@mkdir -p $(BUILD_DIR)
+	$(CC) -Wall -o $(BUILD_DIR)/$(APP) main.c $(SRC) $(INC) $(MATH) -O3 -g
 	@echo $(COMP_STRING)
 
 
 run: all
 	@echo $(EXEC_STRING)
-	@./$(APP)
+	@./$(BUILD_DIR)/$(APP)
+
+clean:
+	rm -rf $(BUILD_DIR)

@@ -200,6 +200,10 @@ int main(){
                 // TODO: stai passando due volte gli stessi parametri!
                 n_peaks_final = _clean_cough_segments(final_starts, final_ends, above_locs, above_peaks, n_idxs_above_th, AUDIO_FS);
 
+                for(uint16_t k=0; k<n_peaks_final; k++){
+                    printf("COUGH_SEG: %u %u\n", final_starts[k], final_ends[k]);
+                }
+
                 free(idxs_above_th);
                 free(final_starts);
                 free(final_ends);
