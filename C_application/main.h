@@ -6,8 +6,8 @@
 //////////////////////////////////////
 /* Model to be used                 */
 //////////////////////////////////////
-#include <audio_model.h>
-#include <imu_model.h>
+#include <audio_model.h>            
+#include <imu_model.h>              
 //////////////////////////////////////
 
 
@@ -16,7 +16,7 @@
 // ///////////////////////////////////
 #include <input_data/audio_input_55502_w0_9wnds.h>
 #include <input_data/imu_input_55502_w0_9wnds.h>
-#include <input_data/55502/bio_input_55502.h>
+#include <input_data/bio_input_55502.h>
 //////////////////////////////////////
 
 
@@ -41,7 +41,7 @@
 ////////////////////////////////////////////////
 
 // Execute in multimodal mode, using both modalities cooperating
-#define RUN_MIXED
+// #define RUN_MIXED
 
 #ifndef RUN_MIXED
     // #define RUN_ONLY_AUD        // Use only the audio modality
