@@ -5,3 +5,6 @@ __pycache__/
 
 # C build
 C_application/build/
+
+# Generated evaluation headers (per-subject folders)
+C_application/input_data/*/
