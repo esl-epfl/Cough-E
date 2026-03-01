@@ -156,11 +156,21 @@ int main(){
             // Identify the peaks   
             _get_cough_peaks(&audio_in.air[idx_start_window], WINDOW_SAMP_AUDIO, AUDIO_FS, &starts[n_peaks], &ends[n_peaks], &locs[n_peaks], &peaks[n_peaks], &new_added);
 
-            // Readjust the indexes for the position of the current window (to get absolute index)
+            // Convert relative peak positions to absolute sample indices.
+            // Bug fix: idx_start_window is already an absolute sample index
+            // (from get_idx_window() = time_start_wind * AUDIO_FS), so we add it
+            // directly. The original code incorrectly multiplied by AUDIO_STEP,
+            // causing uint16_t overflow on all windows after the first.
             for(uint16_t j=0; j<new_added; j++){
-                starts[n_peaks+j] += idx_start_window*AUDIO_STEP;
-                ends[n_peaks+j] += idx_start_window*AUDIO_STEP;
-                locs[n_peaks+j] += (idx_start_window*AUDIO_STEP);
+                printf("DEBUG idx_start_window=%u, old_buggy=%u, relative_start=%u, absolute_start=%u\n",
+                       idx_start_window,
+                       (uint32_t)(idx_start_window * AUDIO_STEP),
+                       starts[n_peaks+j],
+                       (uint32_t)(starts[n_peaks+j] + idx_start_window));
+
+                starts[n_peaks+j] += idx_start_window;
+                ends[n_peaks+j] += idx_start_window;
+                locs[n_peaks+j] += idx_start_window;
                 audio_confidence[n_peaks+j] = audio_proba;
             }
             n_peaks += new_added;

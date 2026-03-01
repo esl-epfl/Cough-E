@@ -1,25 +1,30 @@
 """
 Transform public dataset recordings into C header files for the Cough-E C application.
 
-Converts WAV audio + CSV IMU + JSON biodata from the public dataset into the .h format expected by the C application's input_data/ directory.
+Converts WAV audio + CSV IMU + JSON biodata into the .h format expected by input_data/.
 Files are organized into per-subject subfolders: input_data/{subj_id}/
 
 Usage:
-    python transform_dataset.py --dataset_path /path/to/public_dataset --output_dir /path/to/C_application/input_data
-    python transform_dataset.py --dataset_path /path/to/public_dataset --output_dir /path/to/C_application/input_data --subjects 55502 14287 14342
+    python transform_dataset.py --dataset_path /path/to/public_dataset \
+                                --output_dir /path/to/C_application/input_data
+    python transform_dataset.py --dataset_path /path/to/public_dataset \
+                                --output_dir /path/to/C_application/input_data \
+                                --subjects 55502 14287
 """
 
-import numpy as np
+import argparse
+import importlib.util
 import json
 import os
-import argparse
 
-# Import helpers directly from ML_methodology/src (bypassing __init__.py which pulls heavy deps)
-import importlib.util
+import numpy as np
+
+# Import helpers from ML_methodology/src (bypassing __init__.py which pulls heavy deps)
 _helpers_path = os.path.join(os.path.dirname(__file__), '..', 'ML_methodology', 'src', 'helpers.py')
 _spec = importlib.util.spec_from_file_location("helpers", _helpers_path)
 _helpers = importlib.util.module_from_spec(_spec)
 _spec.loader.exec_module(_helpers)
+
 load_audio = _helpers.load_audio
 load_imu = _helpers.load_imu
 FS_AUDIO = _helpers.FS_AUDIO
@@ -33,12 +38,16 @@ Trial = _helpers.Trial
 AUDIO_FS_TARGET = 8000
 IMU_FS = FS_IMU  # 100 Hz
 
-# Experimental conditions to process (matches no_bystander_cough_training test conditions)
+# Experimental conditions (matches no_bystander_cough_training test conditions)
 SOUNDS = [s.value for s in Sound]
 NOISES = [n.value for n in Noise]
 MOVEMENTS = [m.value for m in Movement]
 TRIALS = [t.value for t in Trial]
 
+
+# ──────────────────────────────────────────────
+#  Header file generation
+# ──────────────────────────────────────────────
 
 def make_recording_suffix(subj_id, trial, mov, noise, sound):
     """Create a unique suffix for header file naming."""
@@ -127,11 +136,10 @@ def generate_imu_header(imu_data, imu_len, suffix, output_dir):
 
 
 def generate_bio_header(bio_path, subj_id, output_dir):
-    """Generate biodata C header file matching the format in input_data/."""
+    """Generate biodata C header file. Skips if already exists (one per subject)."""
     filename = f"bio_input_{subj_id}.h"
     filepath = os.path.join(output_dir, filename)
 
-    # Skip if already generated for this subject
     if os.path.exists(filepath):
         return filename
 
@@ -152,15 +160,17 @@ def generate_bio_header(bio_path, subj_id, output_dir):
     return filename
 
 
+# ──────────────────────────────────────────────
+#  Recording & subject transformation
+# ──────────────────────────────────────────────
+
 def transform_recording(subj_id, trial, mov, noise, sound, dataset_path, output_dir):
     """
     Transform a single recording from the public dataset into C header files.
-    Files are placed in output_dir/{subj_id}/ subfolder.
 
     Returns:
-        tuple: (suffix, audio_relpath, imu_relpath, bio_relpath) or None if recording doesn't exist.
-        The relpaths are relative to output_dir's parent (e.g. "input_data/{subj_id}/file.h"
-        becomes "{subj_id}/file.h" relative to output_dir).
+        (suffix, audio_relpath, imu_relpath, bio_relpath) or None if recording doesn't exist.
+        Relpaths are relative to output_dir (e.g. "{subj_id}/audio_input_{suffix}.h").
     """
     rec_path = os.path.join(dataset_path, subj_id,
                             f'trial_{trial}', f'mov_{mov}',
@@ -173,41 +183,40 @@ def transform_recording(subj_id, trial, mov, noise, sound, dataset_path, output_
     subj_dir = os.path.join(output_dir, subj_id)
     os.makedirs(subj_dir, exist_ok=True)
 
-    # Check if already transformed (idempotent)
+    # Skip if already transformed (idempotent)
     audio_file = f"audio_input_{suffix}.h"
+    imu_file = f"imu_input_{suffix}.h"
+    bio_file = f"bio_input_{subj_id}.h"
+
     if os.path.exists(os.path.join(subj_dir, audio_file)):
-        imu_file = f"imu_input_{suffix}.h"
-        bio_file = f"bio_input_{subj_id}.h"
         return suffix, f"{subj_id}/{audio_file}", f"{subj_id}/{imu_file}", f"{subj_id}/{bio_file}"
 
-    # Load and downsample audio using helpers.py load_audio()
+    # Load and downsample audio
     try:
         audio_air, _ = load_audio(dataset_path + '/', subj_id, AUDIO_FS_TARGET,
                                   trial, mov, noise, sound)
     except Exception:
         return None
 
-    # Load IMU using helpers.py load_imu()
+    # Load IMU data
     imu = load_imu(dataset_path + '/', subj_id, trial, mov, noise, sound)
     if imu == 0:
         return None
-    # Stack in same order as dataset_gen.py: [x, y, z, Y, P, R]
+
     imu_data = np.stack((imu.x, imu.y, imu.z, imu.Y, imu.P, imu.R), axis=1)
     audio = audio_air
 
-    # Align durations: truncate both to the shorter signal's duration
-    # Rule: IMU_LEN * (AUDIO_FS / IMU_FS) = AUDIO_LEN
+    # Align durations: truncate to shorter signal, enforcing IMU_LEN * 80 = AUDIO_LEN
     ratio = AUDIO_FS_TARGET // IMU_FS  # 80
     imu_len = len(imu_data)
-    audio_len_from_imu = imu_len * ratio
-    audio_len = min(len(audio), audio_len_from_imu)
+    audio_len = min(len(audio), imu_len * ratio)
     imu_len = audio_len // ratio
-    audio_len = imu_len * ratio  # Ensure exact alignment
+    audio_len = imu_len * ratio  # ensure exact alignment
 
     audio = audio[:audio_len]
     imu_data = imu_data[:imu_len]
 
-    # Generate header files into subject subfolder
+    # Generate header files
     audio_file = generate_audio_header(audio, audio_len, suffix, subj_dir)
     imu_file = generate_imu_header(imu_data, imu_len, suffix, subj_dir)
     bio_file = generate_bio_header(
@@ -238,8 +247,10 @@ def transform_all(dataset_path, output_dir, subjects=None):
     os.makedirs(output_dir, exist_ok=True)
 
     if subjects is None:
-        subjects = sorted(os.listdir(dataset_path))
-        subjects = [s for s in subjects if os.path.isdir(os.path.join(dataset_path, s))]
+        subjects = sorted([
+            s for s in os.listdir(dataset_path)
+            if os.path.isdir(os.path.join(dataset_path, s))
+        ])
 
     all_results = {}
     for subj_id in subjects:
@@ -253,15 +264,19 @@ def transform_all(dataset_path, output_dir, subjects=None):
     return all_results
 
 
+# ──────────────────────────────────────────────
+#  CLI
+# ──────────────────────────────────────────────
+
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(
-        description="Transform public dataset into C header files for Cough-E C application")
+        description="Transform public dataset into C header files for Cough-E")
     parser.add_argument("--dataset_path", type=str, required=True,
                         help="Path to the public_dataset directory")
     parser.add_argument("--output_dir", type=str, required=True,
-                        help="Path to the C application input_data directory")
+                        help="Path to C application input_data directory")
     parser.add_argument("--subjects", nargs="+", type=str, default=None,
-                        help="Specific subject IDs to transform (default: all)")
+                        help="Specific subject IDs (default: all)")
     args = parser.parse_args()
 
     transform_all(args.dataset_path, args.output_dir, args.subjects)
