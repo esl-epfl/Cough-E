@@ -10,4 +10,8 @@ C_application/build/
 C_application/input_data/*/
 
 # Evaluation output
-evaluation/results.csv
+C_application/evaluation/results.csv
+C_application/evaluation/summary.json
+
+# Local dataset
+datasets/

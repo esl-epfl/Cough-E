@@ -50,17 +50,14 @@ MIN_DURATION_BTWN_EVENTS = 0
 MIN_OVERLAP = MIN_COUGH_DURATION / 0.8  # 0.125
 
 # Paths (relative to repo root)
-REPO_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
+REPO_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
 C_APP_DIR = os.path.join(REPO_ROOT, "C_application")
 MAIN_H_PATH = os.path.join(C_APP_DIR, "main.h")
 INPUT_DATA_DIR = os.path.join(C_APP_DIR, "input_data")
 BUILD_DIR = os.path.join(C_APP_DIR, "build")
 EXECUTABLE = os.path.join(BUILD_DIR, "cough-e")
 
-DEFAULT_DATASET_PATH = os.path.join(
-    os.path.expanduser("~"),
-    "Desktop", "BA6_EL", "BA6", "Bachelor Thesis", "Datasets", "public_dataset"
-)
+DEFAULT_DATASET_PATH = os.path.join(REPO_ROOT, "datasets", "public_dataset")
 
 # Original main.h content for backup/restore
 MAIN_H_ORIGINAL = None
@@ -111,8 +108,8 @@ def update_main_h(audio_relpath, imu_relpath, bio_relpath):
 # ──────────────────────────────────────────────
 
 def compile_c_app():
-    """Compile the C application. Returns True on success."""
-    result = subprocess.run(["make", "-C", C_APP_DIR],
+    """Compile the C application with EVALUATION_MODE enabled. Returns True on success."""
+    result = subprocess.run(["make", "-C", C_APP_DIR, "CFLAGS=-DEVALUATION_MODE"],
                             capture_output=True, text=True)
     if result.returncode != 0:
         print(f"  Compilation failed: {result.stderr}")

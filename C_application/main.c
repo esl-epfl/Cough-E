@@ -156,18 +156,7 @@ int main(){
             // Identify the peaks   
             _get_cough_peaks(&audio_in.air[idx_start_window], WINDOW_SAMP_AUDIO, AUDIO_FS, &starts[n_peaks], &ends[n_peaks], &locs[n_peaks], &peaks[n_peaks], &new_added);
 
-            // Convert relative peak positions to absolute sample indices.
-            // Bug fix: idx_start_window is already an absolute sample index
-            // (from get_idx_window() = time_start_wind * AUDIO_FS), so we add it
-            // directly. The original code incorrectly multiplied by AUDIO_STEP,
-            // causing uint16_t overflow on all windows after the first.
             for(uint16_t j=0; j<new_added; j++){
-                printf("DEBUG idx_start_window=%u, old_buggy=%u, relative_start=%u, absolute_start=%u\n",
-                       idx_start_window,
-                       (uint32_t)(idx_start_window * AUDIO_STEP),
-                       starts[n_peaks+j],
-                       (uint32_t)(starts[n_peaks+j] + idx_start_window));
-
                 starts[n_peaks+j] += idx_start_window;
                 ends[n_peaks+j] += idx_start_window;
                 locs[n_peaks+j] += idx_start_window;
@@ -210,9 +199,11 @@ int main(){
                 // TODO: stai passando due volte gli stessi parametri!
                 n_peaks_final = _clean_cough_segments(final_starts, final_ends, above_locs, above_peaks, n_idxs_above_th, AUDIO_FS);
 
+                #ifdef EVALUATION_MODE
                 for(uint16_t k=0; k<n_peaks_final; k++){
                     printf("COUGH_SEG: %u %u\n", final_starts[k], final_ends[k]);
                 }
+                #endif
 
                 free(idxs_above_th);
                 free(final_starts);
@@ -221,7 +212,9 @@ int main(){
                 free(above_peaks);
             }
             
+            #ifdef EVALUATION_MODE
             printf("N_PEAKS FINAL: %d\n", n_peaks_final);
+            #endif
             
             // Reset postprocessing variables to their default value
             n_peaks = 0;

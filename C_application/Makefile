@@ -34,7 +34,7 @@ EXEC_STRING +=	"|++++++++++++++++++++++++++++++++|\n"
 
 all:
 	@mkdir -p $(BUILD_DIR)
-	$(CC) -Wall -o $(BUILD_DIR)/$(APP) main.c $(SRC) $(INC) $(MATH) -O3 -g
+	$(CC) -Wall -o $(BUILD_DIR)/$(APP) main.c $(SRC) $(INC) $(MATH) -O3 -g $(CFLAGS)
 	@echo $(COMP_STRING)
 
 

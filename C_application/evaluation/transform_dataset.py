@@ -20,7 +20,7 @@ import os
 import numpy as np
 
 # Import helpers from ML_methodology/src (bypassing __init__.py which pulls heavy deps)
-_helpers_path = os.path.join(os.path.dirname(__file__), '..', 'ML_methodology', 'src', 'helpers.py')
+_helpers_path = os.path.join(os.path.dirname(__file__), '..', '..', 'ML_methodology', 'src', 'helpers.py')
 _spec = importlib.util.spec_from_file_location("helpers", _helpers_path)
 _helpers = importlib.util.module_from_spec(_spec)
 _spec.loader.exec_module(_helpers)
