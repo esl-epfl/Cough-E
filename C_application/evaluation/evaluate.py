@@ -10,10 +10,10 @@ Pipeline per recording:
   6. Compare with ground truth using event-based scoring (timescoring)
 
 Usage:
-    python evaluation/evaluate.py                                     # full pipeline, all subjects
-    python evaluation/evaluate.py full --subjects 14287 14342         # specific subjects
-    python evaluation/evaluate.py full --dataset_path /path/to/data   # custom dataset path
-    python evaluation/evaluate.py aggregate --csv evaluation/results.csv  # re-aggregate from CSV
+    python C_application/evaluation/evaluate.py                                     # full pipeline, all subjects
+    python C_application/evaluation/evaluate.py full --subjects 14287 14342         # specific subjects
+    python C_application/evaluation/evaluate.py full --dataset_path /path/to/data   # custom dataset path
+    python C_application/evaluation/evaluate.py aggregate --csv C_application/evaluation/results.csv  # re-aggregate from CSV
 """
 
 import argparse
@@ -57,7 +57,7 @@ INPUT_DATA_DIR = os.path.join(C_APP_DIR, "input_data")
 BUILD_DIR = os.path.join(C_APP_DIR, "build")
 EXECUTABLE = os.path.join(BUILD_DIR, "cough-e")
 
-DEFAULT_DATASET_PATH = os.path.join(REPO_ROOT, "datasets", "public_dataset")
+DEFAULT_DATASET_PATH = os.path.join(REPO_ROOT, "Datasets", "full_dataset_test")
 
 # Original main.h content for backup/restore
 MAIN_H_ORIGINAL = None
@@ -119,7 +119,11 @@ def compile_c_app():
 
 def run_c_app():
     """Run the compiled C application and return stdout."""
-    result = subprocess.run([EXECUTABLE], capture_output=True, text=True, timeout=30)
+    try:
+        result = subprocess.run([EXECUTABLE], capture_output=True, text=True, timeout=60)
+    except subprocess.TimeoutExpired:
+        print("    WARNING: C app timed out after 60s (possible stuck)", flush=True)
+        return ""
     return result.stdout
 
 
@@ -520,12 +524,12 @@ def cmd_full(args):
 
 def main():
     parser = argparse.ArgumentParser(
-        description="Evaluate Cough-E C application against public dataset")
+        description="Evaluate Cough-E C application against full_dataset_test")
     subparsers = parser.add_subparsers(dest="command")
 
     def add_common_args(p):
         p.add_argument("--dataset_path", type=str, default=DEFAULT_DATASET_PATH,
-                        help=f"Path to public_dataset (default: {DEFAULT_DATASET_PATH})")
+                        help=f"Path to full_dataset_test (default: {DEFAULT_DATASET_PATH})")
         p.add_argument("--subjects", nargs="+", type=str, default=None,
                         help="Specific subject IDs (default: all)")
         p.add_argument("--sounds", nargs="+", type=str, default=SOUNDS)

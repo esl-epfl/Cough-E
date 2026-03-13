@@ -1,6 +1,6 @@
 # Evaluation Pipeline
 
-This folder contains scripts for systematically evaluating the Cough-E C application against the public dataset. The pipeline automates the full process: converting dataset recordings into C header files, compiling and running the C application for each recording, parsing the output, and scoring the results using event-based metrics.
+This folder contains scripts for systematically evaluating the Cough-E C application against the test set (`full_dataset_test`). The pipeline automates the full process: converting dataset recordings into C header files, compiling and running the C application for each recording, parsing the output, and scoring the results using event-based metrics.
 
 ## Scripts
 
@@ -20,7 +20,7 @@ Full evaluation pipeline with multiple subcommands. For each recording, it updat
 
 ## Usage
 
-All commands are run from the repository root (`Cough-E/`). The dataset path defaults to `datasets/public_dataset/` relative to the repo root (this directory is `.gitignore`d).
+All commands are run from the repository root (`Cough-E/`).
 
 #### Full pipeline (transform + evaluate, all subjects)
 ```
@@ -34,17 +34,17 @@ python C_application/evaluation/evaluate.py full --subjects 14287 14342
 
 #### Custom dataset path
 ```
-python C_application/evaluation/evaluate.py full --dataset_path /path/to/public_dataset
+python C_application/evaluation/evaluate.py full --dataset_path /path/to/full_dataset_test
 ```
 
 #### Transform dataset only
 ```
-python C_application/evaluation/transform_dataset.py --dataset_path /path/to/public_dataset --output_dir C_application/input_data
+python C_application/evaluation/transform_dataset.py --dataset_path /path/to/full_dataset_test --output_dir C_application/input_data
 ```
 
 #### Run evaluation only (assumes headers already generated)
 ```
-python C_application/evaluation/evaluate.py run --dataset_path /path/to/public_dataset
+python C_application/evaluation/evaluate.py run --dataset_path /path/to/full_dataset_test
 ```
 
 #### Aggregate metrics from an existing results CSV
@@ -60,7 +60,7 @@ python C_application/evaluation/evaluate.py aggregate --csv C_application/evalua
 ## Dependencies
 
 The evaluation scripts rely on:
-- The public dataset (downloadable from [Zenodo](https://zenodo.org/records/7562332))
+- The private test dataset (`full_dataset_test`).
 - `ML_methodology/src/helpers.py` for data loading functions
 - The [timescoring](https://github.com/esl-epfl/epilepsy_performance_metrics) library for event-based scoring
 - `numpy`, `scipy` (used by helpers.py for audio decimation)
