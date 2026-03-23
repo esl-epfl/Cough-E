@@ -1,0 +1,17 @@
+# Python
+__pycache__/
+*.pyc
+*.pyo
+
+# C build
+C_application/build/
+
+# Generated evaluation headers (per-subject folders)
+C_application/input_data/*/
+
+# Evaluation output
+C_application/evaluation/results.csv
+C_application/evaluation/summary.json
+
+# Local dataset
+datasets/

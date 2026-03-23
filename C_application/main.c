@@ -156,11 +156,10 @@ int main(){
             // Identify the peaks   
             _get_cough_peaks(&audio_in.air[idx_start_window], WINDOW_SAMP_AUDIO, AUDIO_FS, &starts[n_peaks], &ends[n_peaks], &locs[n_peaks], &peaks[n_peaks], &new_added);
 
-            // Readjust the indexes for the position of the current window (to get absolute index)
             for(uint16_t j=0; j<new_added; j++){
-                starts[n_peaks+j] += idx_start_window*AUDIO_STEP;
-                ends[n_peaks+j] += idx_start_window*AUDIO_STEP;
-                locs[n_peaks+j] += (idx_start_window*AUDIO_STEP);
+                starts[n_peaks+j] += idx_start_window;
+                ends[n_peaks+j] += idx_start_window;
+                locs[n_peaks+j] += idx_start_window;
                 audio_confidence[n_peaks+j] = audio_proba;
             }
             n_peaks += new_added;
@@ -200,6 +199,12 @@ int main(){
                 // TODO: stai passando due volte gli stessi parametri!
                 n_peaks_final = _clean_cough_segments(final_starts, final_ends, above_locs, above_peaks, n_idxs_above_th, AUDIO_FS);
 
+                #ifdef EVALUATION_MODE
+                for(uint16_t k=0; k<n_peaks_final; k++){
+                    printf("COUGH_SEG: %u %u\n", final_starts[k], final_ends[k]);
+                }
+                #endif
+
                 free(idxs_above_th);
                 free(final_starts);
                 free(final_ends);
@@ -207,7 +212,9 @@ int main(){
                 free(above_peaks);
             }
             
+            #ifdef EVALUATION_MODE
             printf("N_PEAKS FINAL: %d\n", n_peaks_final);
+            #endif
             
             // Reset postprocessing variables to their default value
             n_peaks = 0;
