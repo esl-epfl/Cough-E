@@ -12,6 +12,10 @@ C_application/input_data/*/
 # Evaluation output
 C_application/evaluation/results.csv
 C_application/evaluation/summary.json
+
+# Range analysis output
 C_application/range_analysis/range_results.csv
 C_application/range_analysis/range_results.json
-Datasets
+
+# Local dataset
+datasets/
