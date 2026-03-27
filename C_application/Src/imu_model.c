@@ -3,6 +3,7 @@
 #include <math.h>
 
 #include <imu_model.h>
+#include <range_analysis.h>
 
 float _imu_sigmoid(float score){
     if(score < 0.0){
@@ -13,6 +14,8 @@ float _imu_sigmoid(float score){
 }
 
 float imu_predict(float *feats){
+
+    RA_LOG_ARRAY("CLASSIFY", "imu_predict", "feats_input", feats, TOT_FEATURES_IMU_MODEL_IMU);
 
     float score = 0.0;
 
@@ -41,6 +44,10 @@ float imu_predict(float *feats){
         }
     }
 
+    RA_LOG_SCALAR("CLASSIFY", "imu_predict", "score", score);
+
     float res = _imu_sigmoid(score);
+    RA_LOG_SCALAR("CLASSIFY", "_imu_sigmoid", "result", res);
+
     return res;
 }

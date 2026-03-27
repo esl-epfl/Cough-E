@@ -9,6 +9,12 @@
 
 #include <audio_features.h>
 #include <imu_features.h>
+#include <range_analysis.h>
+
+#ifdef RANGE_ANALYSIS
+const char *_ra_imu_signal_ctx = "UNKNOWN";
+int _ra_imu_active = 0;
+#endif
 
 
 //////////////////////////////////////////////////////////////////////////////////
@@ -143,11 +149,13 @@ int is_required(const int8_t *features_selector, uint16_t start_index, uint16_t 
 
 
 void fft_based_features(const int8_t *features_selector, const float *sig, int16_t len, int16_t fs, float *feats){
-    
+
     // FFT-dependent features' indexes
     // 0  : 6  the singular ones
 
     if(is_required(features_selector, SPECTRAL_DECREASE, SPECTRAL_SKEW)){
+
+        RA_LOG_ARRAY("AUDIO_FFT", "fft_based_features", "sig_input", sig, len);
 
         int16_t fft_size = (len / 2) + 1;
         float *magnitudes = (float*) malloc(fft_size * sizeof(float));
@@ -218,6 +226,9 @@ void periodogram_based_features(const int8_t *features_selector, const float *si
     // 7  : 9 for the singular ones
     // 10 : 12 for the PSD ones
     if(is_required(features_selector, SPECTRAL_FLATNESS, POWER_SPECTRAL_DENSITY + N_PSD - 1)){
+
+        RA_LOG_ARRAY("AUDIO_PSD", "periodogram_based_features", "sig_input", sig, len);
+
         // compute Periodogram
         int16_t psd_size = (NPERSEG / 2) + 1;
         float *psd = (float*)malloc(psd_size * sizeof(float));
@@ -294,6 +305,8 @@ void mel_spectrogram_features(const int8_t *features_selector, const float *sig,
 
     if(is_required(features_selector, MEL_FREQUENCY_CEPSTRAL_COEFFICIENT, ZERO_CROSSING_RATE - 1)){
 
+        RA_LOG_ARRAY("AUDIO_MEL", "mel_spectrogram_features", "sig_input", sig, len);
+
         // compute MEL SPECTROGRAM
 
         // Indexes of the Mel bins required for the features computation
@@ -346,9 +359,13 @@ void mean_based_features(const int8_t *features_selector, const float *sig, int1
 
     // 39 : 41 for the singular ones
     if(is_required(features_selector, ROOT_MEANS_SQUARED, CREST_FACTOR)){
+
+        RA_LOG_ARRAY("AUDIO_FFT", "mean_based_features", "sig_input", sig, len);
+
         // compute mean
         float *zero_mean = (float *) malloc(len * sizeof(float));  // to store the signal after subtracting the mean
         sub_mean(sig, zero_mean, len);
+        RA_LOG_ARRAY("AUDIO_FFT", "mean_based_features", "zero_mean", zero_mean, len);
 
 
         if(features_selector[ZERO_CROSSING_RATE]){
@@ -360,6 +377,7 @@ void mean_based_features(const int8_t *features_selector, const float *sig, int1
         if(features_selector[ROOT_MEANS_SQUARED] || features_selector[CREST_FACTOR]){
             // compute RMS
             float rms = get_rms(zero_mean, len);
+            RA_LOG_SCALAR("AUDIO_FFT", "audio_rms", "result", rms);
 
             if(features_selector[ROOT_MEANS_SQUARED]){
                 // append RMS
@@ -370,6 +388,8 @@ void mean_based_features(const int8_t *features_selector, const float *sig, int1
                 // compute CREST
                 float peak = get_max(zero_mean, len);
                 float crest_factor = peak / rms;
+                RA_LOG_SCALAR("AUDIO_FFT", "audio_crest", "peak", peak);
+                RA_LOG_SCALAR("AUDIO_FFT", "audio_crest", "result", crest_factor);
                 feats[CREST_FACTOR] = crest_factor;
             }
         }
@@ -425,6 +445,7 @@ void imu_signal_features(const int8_t *features_selector, float *sig, int16_t le
             // CREST_FACTOR_IMU is required
             float cf_imu = get_max(sig, len);
             cf_imu = cf_imu / rms_imu;
+            RA_IMU_LOG_SCALAR("crest_factor", "result", cf_imu);
             feats[CREST_FACTOR_IMU] = cf_imu;
 
         }
@@ -445,9 +466,15 @@ void imu_signal_features(const int8_t *features_selector, float *sig, int16_t le
 }
 
 
+#ifdef RANGE_ANALYSIS
+static const char *_imu_signal_names[] = {
+    "accel_x", "accel_y", "accel_z", "gyro_y", "gyro_p", "gyro_r"
+};
+#endif
+
 void compute_imu_family(const int8_t *features_selector, const float signal[][Num_IMU_signals], int16_t len, int8_t signal_idx, int8_t sig_feat_idx, float *feats){
-    
-    // This array is filled with the proper signal samples 
+
+    // This array is filled with the proper signal samples
     float *signal_samples = (float*)malloc(len * sizeof(float));
 
 
@@ -459,7 +486,11 @@ void compute_imu_family(const int8_t *features_selector, const float signal[][Nu
             signal_samples[i] = signal[i][signal_idx];
         }
 
+        RA_LOG_ARRAY("IMU_RAW", "imu_features", _imu_signal_names[signal_idx], signal_samples, len);
+
+        RA_SET_IMU_CTX("IMU_RAW");
         imu_signal_features(&features_selector[sig_feat_idx], signal_samples, len, &feats[sig_feat_idx]);
+        RA_CLEAR_IMU_CTX();
     }
 
     free(signal_samples);
@@ -501,24 +532,24 @@ void imu_features(const int8_t *features_selector, const float sig[][Num_IMU_sig
 
     // Here len is the IMU_DIM_1 macro in the hardcoded samples
 
-    // ACCEL_X  
+    // ACCEL_X
     compute_imu_family(features_selector, sig, len, ACCELEROMETER_X, ACCEL_X_FEAT, feats);
 
-    // ACCEL_Y  
+    // ACCEL_Y
     compute_imu_family(features_selector, sig, len, ACCELEROMETER_Y, ACCEL_Y_FEAT, feats);
 
-    // ACCEL_Z  
+    // ACCEL_Z
     compute_imu_family(features_selector, sig, len, ACCELEROMETER_Z, ACCEL_Z_FEAT, feats);
 
 
 
-    // GYRO_Y  
+    // GYRO_Y
     compute_imu_family(features_selector, sig, len, GYROSCOPE_Y, GYRO_Y_FEAT, feats);
 
-    // GYRO_P  
+    // GYRO_P
     compute_imu_family(features_selector, sig, len, GYROSCOPE_P, GYRO_P_FEAT, feats);
 
-    // GYRO_R  
+    // GYRO_R
     compute_imu_family(features_selector, sig, len, GYROSCOPE_R, GYRO_R_FEAT, feats);
 
     // Array to store the combination of signals (ACCEL and then GYRO)
@@ -526,15 +557,21 @@ void imu_features(const int8_t *features_selector, const float sig[][Num_IMU_sig
 
     // combine the signals by taking the L2 norm of them.
     // For every istant, the L2 norm is computed on the samples of the signals
+    RA_SET_IMU_CTX("IMU_L2_ACCEL");
     for(int16_t i=0; i<len; i++){
         combo_signal[i] = L2_norm(&sig[i][0], 3);
     }
+    RA_IMU_LOG_ARRAY("imu_features", "sig_input", combo_signal, len);
     imu_signal_features(&features_selector[ACCEL_COMBO], combo_signal, len, &feats[ACCEL_COMBO]);
+    RA_CLEAR_IMU_CTX();
 
+    RA_SET_IMU_CTX("IMU_L2_GYRO");
     for(int16_t i=0; i<len; i++){
         combo_signal[i] = L2_norm(&sig[i][3], 3);
     }
+    RA_IMU_LOG_ARRAY("imu_features", "sig_input", combo_signal, len);
     imu_signal_features(&features_selector[GYRO_COMBO], combo_signal, len, &feats[GYRO_COMBO]);
+    RA_CLEAR_IMU_CTX();
 
     free(combo_signal);
 

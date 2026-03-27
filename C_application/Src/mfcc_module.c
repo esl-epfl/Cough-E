@@ -17,6 +17,7 @@
 #include <kiss_fftr.h>
 
 #include <dct_lin.h>
+#include <range_analysis.h>
 
 // This function is internally used to avoid the helper module
 // the need of importing the kiss_fft library 
@@ -39,6 +40,8 @@ void _cmplx_mag(kiss_fft_cpx *x, int16_t len, float *res){
 
 
 void stft(const float *x, int16_t len, int16_t n_frames, float *res){
+
+    RA_LOG_ARRAY("AUDIO_MEL", "stft", "sig_input", x, len);
 
     // apply padding
     int16_t padded_len = (2 * PAD_LEN) + len;
@@ -66,10 +69,30 @@ void stft(const float *x, int16_t len, int16_t n_frames, float *res){
         // apply the window
         vect_mult(column, hann_mfcc_wind, N_FFT, column);
 
+        RA_LOG_ARRAY("AUDIO_MEL", "stft", "windowed_frame", column, N_FFT);
+
         kiss_fftr(cfg, column, cx_out);
+
+        // Log re and im separately for range analysis
+        {
+            float *re_tmp = (float*)malloc(FFT_RES_LEN * sizeof(float));
+            float *im_tmp = (float*)malloc(FFT_RES_LEN * sizeof(float));
+            for(int16_t j=0; j<FFT_RES_LEN; j++){
+                re_tmp[j] = cx_out[j].r;
+                im_tmp[j] = cx_out[j].i;
+            }
+            RA_LOG_ARRAY("AUDIO_MEL", "stft", "re", re_tmp, FFT_RES_LEN);
+            RA_LOG_ARRAY("AUDIO_MEL", "stft", "im", im_tmp, FFT_RES_LEN);
+            free(re_tmp);
+            free(im_tmp);
+        }
+
         _cmplx_mag(cx_out, FFT_RES_LEN, column);
+        RA_LOG_ARRAY("AUDIO_MEL", "stft", "cmplx_mag", column, FFT_RES_LEN);
+
         vect_mult(column, column, FFT_RES_LEN, column); // element-wise power of 2
-        
+        RA_LOG_ARRAY("AUDIO_MEL", "stft", "frames_power", column, FFT_RES_LEN);
+
         // stores the current column result into the result array
         // Note that the each column is stored sequentially
         //
@@ -107,6 +130,8 @@ void mel_spectrogram_full(const float *x, int16_t len, int16_t n_frames, float *
         }
     }
 
+    RA_LOG_ARRAY("AUDIO_MEL", "mel_spectrogram_full", "output", res, MEL_ROWS * n_frames);
+
     free(frames_power);
 }
 
@@ -138,6 +163,8 @@ void mel_spectrogram(const float *x, int16_t len, int16_t n_frames, uint8_t *idx
         }
     }
 
+    RA_LOG_ARRAY("AUDIO_MEL", "mel_spectrogram", "output", res, current_idx * n_frames);
+
     free(frames_power);
 }
 
@@ -146,6 +173,8 @@ void mel_spectrogram(const float *x, int16_t len, int16_t n_frames, uint8_t *idx
 
 
 void power_to_dB(float *x, int16_t len, float *res){
+    RA_LOG_ARRAY("AUDIO_MEL", "power_to_dB", "input", x, len);
+
     float sample = 0.0;
     for(int16_t i=0; i<len; i++){
         if(x[i] == 0){
@@ -156,12 +185,14 @@ void power_to_dB(float *x, int16_t len, float *res){
         res[i] = 10.0 * log10f(sample);
     }
     float max = vect_max_value(res, len);
+    RA_LOG_SCALAR("AUDIO_MEL", "power_to_dB", "max_dB", max);
 
     for(int16_t i=0; i<len; i++){
         if((max - TOP_DB) > res[i]){
             res[i] = (max - TOP_DB);
         }
     }
+    RA_LOG_ARRAY("AUDIO_MEL", "power_to_dB", "output", res, len);
 }
 
 
@@ -170,6 +201,8 @@ void power_to_dB(float *x, int16_t len, float *res){
 /// @param len  lenght
 /// @param *y   pointer to the result
 void _dct_linear(float *x, int16_t len, float *y){
+
+    RA_LOG_ARRAY("AUDIO_MEL", "dct_linear", "input", x, len);
 
     float sum = 0.0;
     float scaling = sqrtf(1.0 / (2 * len));
@@ -183,12 +216,14 @@ void _dct_linear(float *x, int16_t len, float *y){
             sum += x[n] * cos_v;
         }
         y[k] = sum * 2;
-        
+
         if(k>0){
             y[k] = y[k] * scaling;
         }
     }
     y[0] = y[0] * sqrtf(1.0 / (4 * len));
+
+    RA_LOG_ARRAY("AUDIO_MEL", "dct_linear", "output", y, len);
 }
 
 
@@ -220,23 +255,29 @@ void dct_matrix(float *x, int16_t rows, int16_t cols, float *y){
 
 void entropy(float *spectrogram, int16_t n_rows, int16_t n_columns, float *res){
 
+    RA_LOG_ARRAY("AUDIO_MEL", "entropy", "input", spectrogram, n_rows * n_columns);
+
     // Store the sum of each row of the spectrogram
     float row_sum = 0.0;
-    
+
     for(int8_t i=0; i<n_rows; i++){
         // Sum each column of the spectrogram
         row_sum = vect_sum(&spectrogram[i*n_columns], n_columns);
+        RA_LOG_SCALAR("AUDIO_MEL", "entropy", "row_sum", row_sum);
 
         // Divide all the row's elements by the sum of the row.
         // Passing the same pointer for input and output --> the input is modified
         vect_div_const(&spectrogram[i*n_columns], n_columns, row_sum, &spectrogram[i*n_columns]);
+        RA_LOG_ARRAY("AUDIO_MEL", "entropy", "normalized_row", &spectrogram[i*n_columns], n_columns);
     }
 
     // Compute the entropy
     entropy_calc(spectrogram, (n_rows * n_columns), 1);
+    RA_LOG_ARRAY("AUDIO_MEL", "entropy", "neg_p_ln_p", spectrogram, n_rows * n_columns);
 
     // Sum each column of the spectrogram
     for(int8_t i=0; i<n_rows; i++){
         res[i] = vect_sum(&spectrogram[i*n_columns], n_columns);
+        RA_LOG_SCALAR("AUDIO_MEL", "entropy", "result", res[i]);
     }
 }

@@ -4,10 +4,13 @@
 #include <filtering.h>
 #include <helpers.h>
 #include <filters_parameters.h>
+#include <range_analysis.h>
 
 
 
 void linear_filer(float *sig, int len, const float *b, const float *a, float *zi, float *res){
+
+    RA_LOG_ARRAY("AUDIO_EEPD", "linear_filter", "input", sig, len);
 
     float sig_1 = 0.0;
     float y_1 = 0.0;
@@ -15,7 +18,7 @@ void linear_filer(float *sig, int len, const float *b, const float *a, float *zi
     float s_1 = zi[0];
     float s_2 = zi[1];
 
-    // First one needs to be done outside the loop in order not to 
+    // First one needs to be done outside the loop in order not to
     // update the states (s_1 and s_2)
     res[0] = b[0] * sig[0] + s_1;
     y_1 = res[0];
@@ -24,7 +27,7 @@ void linear_filer(float *sig, int len, const float *b, const float *a, float *zi
     for(int i=1; i<len; i++){
 
         // s_1 is updated before and s_2 after. This is because at every
-        // iteration we need the filter state 1 (s_1) of the current step and 
+        // iteration we need the filter state 1 (s_1) of the current step and
         // the filter state 2 (s_2) of the previous step.
         // Also by doing so we avoid using 2 extra variables for the signal
         // and output values of 2 steps before
@@ -36,10 +39,14 @@ void linear_filer(float *sig, int len, const float *b, const float *a, float *zi
         sig_1 = sig[i];
         y_1 = res[i];
     }
+
+    RA_LOG_ARRAY("AUDIO_EEPD", "linear_filter", "output", res, len);
 }
 
 
 void filtfilt(const float *sig, int len, const float *b, const float* a, const float *zi, float *res){
+
+    RA_LOG_ARRAY("AUDIO_EEPD", "filtfilt", "input", sig, len);
 
     // PADDING //
     int padded_len = (2 * PADLEN) + len;
@@ -69,10 +76,12 @@ void filtfilt(const float *sig, int len, const float *b, const float* a, const f
     float *res_padded = (float*)malloc(padded_len * sizeof(float));
     linear_filer(reverse, padded_len, b, a, initial, res_padded);
 
-    // CUT THE PADDING TO GET THE FINAL RESULT //  
+    // CUT THE PADDING TO GET THE FINAL RESULT //
     for(int i=0; i<len; i++){
         res[i] = res_padded[PADLEN+len-1-i];    // cut the padding and reverse
     }
+
+    RA_LOG_ARRAY("AUDIO_EEPD", "filtfilt", "output", res, len);
 
     free(pad);
     free(intermediate);
