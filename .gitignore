@@ -33,3 +33,9 @@ C_application/test/
 
 # Local dataset
 datasets/
+
+# Range analysis output
+C_application/range_analysis/
+
+# Overleaf docs
+C_application/OVERLEAF.md
