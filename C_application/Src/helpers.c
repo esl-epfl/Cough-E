@@ -3,6 +3,10 @@
 #include <math.h>
 
 #include <helpers.h>
+
+#ifdef FXP_MODE
+#include <fxp.h>
+#endif
 #include <range_analysis.h>
 
 // Minimum float available (supposing 32-bit float)
@@ -459,3 +463,22 @@ void entropy_calc(float *x, int16_t len, uint8_t base){
         }
     }
 }
+
+
+// =============================================================================
+// Fixed-point kernel instantiations (helpers.c owns: line_length, kurtosis, L2_norm)
+// =============================================================================
+#ifdef FXP_MODE
+
+// Line length: RAW (Q11.5) -> UQ3.23 (32-bit); L2_G (UQ5.11) -> UQ2.9 (16-bit)
+FXP_DEFINE_GET_LINE_LENGTH(raw, uq3_23_t, q11_5_t,  fxp_ll_raw_diff_to_accum, fxp_ll_raw_result)
+FXP_DEFINE_GET_LINE_LENGTH(l2g, uq2_9_t,  uq5_11_t, fxp_ll_l2g_diff_to_accum, fxp_ll_l2g_result)
+
+// Kurtosis: RAW only
+FXP_DEFINE_GET_KURTOSIS_RAW()
+
+// L2 norm: produce one FxP sample from 3 float axis values
+FXP_DEFINE_L2_NORM_ACCEL()
+FXP_DEFINE_L2_NORM_GYRO()
+
+#endif // FXP_MODE

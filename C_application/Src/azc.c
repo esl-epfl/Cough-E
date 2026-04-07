@@ -5,6 +5,10 @@
 #include <math.h>
 #include <range_analysis.h>
 
+#ifdef FXP_MODE
+#include <fxp.h>
+#endif
+
 
 
 /**
@@ -269,3 +273,17 @@ int16_t azc_computation(float *sig, int16_t len, float epsilon){
 
     return azc;
 }
+
+
+// =============================================================================
+// Fixed-point kernel instantiations (azc.c owns: AZC all signal types)
+// =============================================================================
+#ifdef FXP_MODE
+
+// RAW (Q11.5), L2_A (UQ10.6), L2_G (UQ5.11) — each gets interp, max_vdist,
+// polygonal_approx, and azc_computation stamped out by the generator macro.
+FXP_DEFINE_AZC_ALL(raw, q11_5_t,  FXP_AZC_EPS_RAW)
+FXP_DEFINE_AZC_ALL(l2a, uq10_6_t, FXP_AZC_EPS_L2A)
+FXP_DEFINE_AZC_ALL(l2g, uq5_11_t, FXP_AZC_EPS_L2G)
+
+#endif // FXP_MODE

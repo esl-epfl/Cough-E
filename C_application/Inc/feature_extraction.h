@@ -4,6 +4,15 @@
 #include <stdlib.h>
 #include <imu_features.h>
 
+#ifdef FXP_MODE
+#include <fxp.h>
+// Fixed-point IMU signal features dispatcher.
+// sig is a typed FxP buffer (q11_5_t*, uq10_6_t*, or uq5_11_t*) cast to void*.
+// Results are written to feats[] as float (model trees stay float).
+void imu_signal_features_fxp(const int8_t *features_selector, const void *sig,
+                              int16_t len, fxp_sig_type_t sig_type, float *feats);
+#endif
+
 
 /**
     Computes features from the AUDIO signal, passed as parameter.

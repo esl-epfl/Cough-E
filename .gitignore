@@ -6,11 +6,23 @@ __pycache__/
 # C build
 C_application/build/
 
+# FxP test harness build artifacts
+C_application/test/fxp_test_imu
+C_application/test/fxp_test_imu.dSYM/
+C_application/test/__pycache__/
+
+# Range/precision/accuracy analysis outputs (generated, not source)
+C_application/range_analysis/precision_analysis.csv
+C_application/range_analysis/accuracy_results.csv
+C_application/range_analysis/accuracy_summary.csv
+
 # Generated evaluation headers (per-subject folders)
 C_application/input_data/*/
 
 # Evaluation output
 C_application/evaluation/results.csv
+C_application/evaluation/results_float.csv
+C_application/evaluation/results_fxp.csv
 C_application/evaluation/summary.json
 C_application/evaluation/results_float.csv
 C_application/evaluation/results_fxp.csv
@@ -39,3 +51,5 @@ C_application/range_analysis/
 
 # Overleaf docs
 C_application/OVERLEAF.md
+C_application/port.md
+private/

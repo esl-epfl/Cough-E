@@ -9,6 +9,10 @@
 
 #include <audio_features.h>
 #include <imu_features.h>
+
+#ifdef FXP_MODE
+#include <fxp.h>
+#endif
 #include <range_analysis.h>
 
 #ifdef RANGE_ANALYSIS
@@ -475,6 +479,8 @@ static const char *_imu_signal_names[] = {
 void compute_imu_family(const int8_t *features_selector, const float signal[][Num_IMU_signals], int16_t len, int8_t signal_idx, int8_t sig_feat_idx, float *feats){
 
     // This array is filled with the proper signal samples
+
+    // This array is filled with the proper signal samples
     float *signal_samples = (float*)malloc(len * sizeof(float));
 
 
@@ -486,10 +492,21 @@ void compute_imu_family(const int8_t *features_selector, const float signal[][Nu
             signal_samples[i] = signal[i][signal_idx];
         }
 
+#ifdef FXP_MODE
+        // Convert float samples to Q11.5 and run FxP dispatcher (RAW signal type)
+        q11_5_t *sig_fxp = (q11_5_t*)malloc(len * sizeof(q11_5_t));
+        for(int16_t i=0; i<len; i++){
+            sig_fxp[i] = FXP_IMU_RAW_FROM_FLOAT(signal_samples[i]);
+        }
+        imu_signal_features_fxp(&features_selector[sig_feat_idx], sig_fxp, len,
+                                 FXP_SIG_RAW, &feats[sig_feat_idx]);
+        free(sig_fxp);
+#else
         RA_LOG_ARRAY("IMU_RAW", "imu_features", _imu_signal_names[signal_idx], signal_samples, len);
 
         RA_SET_IMU_CTX("IMU_RAW");
         imu_signal_features(&features_selector[sig_feat_idx], signal_samples, len, &feats[sig_feat_idx]);
+#endif
         RA_CLEAR_IMU_CTX();
     }
 
@@ -555,6 +572,26 @@ void imu_features(const int8_t *features_selector, const float sig[][Num_IMU_sig
     // Array to store the combination of signals (ACCEL and then GYRO)
     float *combo_signal = (float*)malloc(len * sizeof(float));
 
+#ifdef FXP_MODE
+    // L2_A: compute FxP L2 norm sample-by-sample (3 accel axes -> UQ10.6)
+    uq10_6_t *combo_l2a = (uq10_6_t*)malloc(len * sizeof(uq10_6_t));
+    uq5_11_t *combo_l2g = (uq5_11_t*)malloc(len * sizeof(uq5_11_t));
+
+    for(int16_t i=0; i<len; i++){
+        combo_l2a[i] = fxp_L2_norm_accel(sig[i][0], sig[i][1], sig[i][2]);
+    }
+    imu_signal_features_fxp(&features_selector[ACCEL_COMBO], combo_l2a, len,
+                             FXP_SIG_L2A, &feats[ACCEL_COMBO]);
+
+    for(int16_t i=0; i<len; i++){
+        combo_l2g[i] = fxp_L2_norm_gyro(sig[i][3], sig[i][4], sig[i][5]);
+    }
+    imu_signal_features_fxp(&features_selector[GYRO_COMBO], combo_l2g, len,
+                             FXP_SIG_L2G, &feats[GYRO_COMBO]);
+
+    free(combo_l2a);
+    free(combo_l2g);
+#else
     // combine the signals by taking the L2 norm of them.
     // For every istant, the L2 norm is computed on the samples of the signals
     RA_SET_IMU_CTX("IMU_L2_ACCEL");
@@ -571,11 +608,121 @@ void imu_features(const int8_t *features_selector, const float sig[][Num_IMU_sig
     }
     RA_IMU_LOG_ARRAY("imu_features", "sig_input", combo_signal, len);
     imu_signal_features(&features_selector[GYRO_COMBO], combo_signal, len, &feats[GYRO_COMBO]);
+#endif
     RA_CLEAR_IMU_CTX();
 
     free(combo_signal);
 
 }
+
+
+// =============================================================================
+// Fixed-point IMU signal features dispatcher
+// Mirrors imu_signal_features() but operates on typed FxP buffers.
+// Results are converted back to float for the feats[] array (model stays float).
+// =============================================================================
+#ifdef FXP_MODE
+void imu_signal_features_fxp(const int8_t *features_selector, const void *sig,
+                              int16_t len, fxp_sig_type_t sig_type, float *feats)
+{
+    // ── Line Length ─────────────────────────────────────────────────────────
+    if(features_selector[LINE_LENGTH]){
+        switch(sig_type){
+            case FXP_SIG_RAW:
+                feats[LINE_LENGTH] = FXP_TO_FLOAT(
+                    fxp_get_line_length_raw((const q11_5_t*)sig, len), 23);
+                break;
+            case FXP_SIG_L2G:
+                feats[LINE_LENGTH] = FXP_TO_FLOAT(
+                    fxp_get_line_length_l2g((const uq5_11_t*)sig, len), 9);
+                break;
+            default: break;   // L2_A: no line length in model
+        }
+    }
+
+    // ── Zero Crossing Rate ────────────────────────────────────────────────────
+    // ZCR only tests sign, so we convert the FxP buffer back to float to reuse
+    // the existing compute_zrc() implementation unchanged.
+    if(features_selector[ZERO_CROSSING_RATE_IMU]){
+        float *tmp = (float*)malloc(len * sizeof(float));
+        switch(sig_type){
+            case FXP_SIG_RAW:
+                for(int16_t i = 0; i < len; i++)
+                    tmp[i] = FXP_TO_FLOAT(((const q11_5_t*)sig)[i],  5);
+                break;
+            case FXP_SIG_L2A:
+                for(int16_t i = 0; i < len; i++)
+                    tmp[i] = FXP_TO_FLOAT(((const uq10_6_t*)sig)[i], 6);
+                break;
+            case FXP_SIG_L2G:
+                for(int16_t i = 0; i < len; i++)
+                    tmp[i] = FXP_TO_FLOAT(((const uq5_11_t*)sig)[i], 11);
+                break;
+        }
+        feats[ZERO_CROSSING_RATE_IMU] = compute_zrc(tmp, len);
+        free(tmp);
+    }
+
+    // ── Kurtosis (RAW only) ──────────────────────────────────────────────────
+    if(features_selector[KURTOSIS] && sig_type == FXP_SIG_RAW){
+        feats[KURTOSIS] = FXP_TO_FLOAT(
+            fxp_get_kurtosis_raw((const q11_5_t*)sig, len), 30);
+    }
+
+    // ── RMS + Crest Factor ───────────────────────────────────────────────────
+    if(features_selector[ROOT_MEANS_SQUARED_IMU] || features_selector[CREST_FACTOR_IMU]){
+        switch(sig_type){
+            case FXP_SIG_RAW: {
+                uq11_16_t rms = fxp_get_rms_raw((const q11_5_t*)sig, len);
+                if(features_selector[ROOT_MEANS_SQUARED_IMU])
+                    feats[ROOT_MEANS_SQUARED_IMU] = FXP_TO_FLOAT(rms, 16);
+                // Crest factor not defined for RAW in the model
+                break;
+            }
+            case FXP_SIG_L2A: {
+                uq13_3_t rms = fxp_get_rms_l2a((const uq10_6_t*)sig, len);
+                if(features_selector[ROOT_MEANS_SQUARED_IMU])
+                    feats[ROOT_MEANS_SQUARED_IMU] = FXP_TO_FLOAT(rms, 3);
+                break;
+            }
+            case FXP_SIG_L2G: {
+                uq7_9_t rms = fxp_get_rms_l2g((const uq5_11_t*)sig, len);
+                if(features_selector[ROOT_MEANS_SQUARED_IMU])
+                    feats[ROOT_MEANS_SQUARED_IMU] = FXP_TO_FLOAT(rms, 9);
+                if(features_selector[CREST_FACTOR_IMU]){
+                    uq5_11_t peak = fxp_get_max_l2g((const uq5_11_t*)sig, len);
+                    feats[CREST_FACTOR_IMU] = FXP_TO_FLOAT(fxp_cf_l2g_result(peak, rms), 14);
+                }
+                break;
+            }
+        }
+    }
+
+    // ── AZC ─────────────────────────────────────────────────────────────────
+    if(is_required(features_selector, APPROXIMATE_ZERO_CROSSING,
+                   APPROXIMATE_ZERO_CROSSING + N_AZC - 1)){
+        float eps = EPSILON_START;
+        for(uint8_t i = 0; i < N_AZC; i++){
+            if(features_selector[APPROXIMATE_ZERO_CROSSING + i] == 1){
+                eps = EPSILON_START + (EPSILON_STEP * i);
+                int16_t azc_val = 0;
+                switch(sig_type){
+                    case FXP_SIG_RAW:
+                        azc_val = fxp_azc_computation_raw((const q11_5_t*)sig, len, eps);
+                        break;
+                    case FXP_SIG_L2A:
+                        azc_val = fxp_azc_computation_l2a((const uq10_6_t*)sig, len, eps);
+                        break;
+                    case FXP_SIG_L2G:
+                        azc_val = fxp_azc_computation_l2g((const uq5_11_t*)sig, len, eps);
+                        break;
+                }
+                feats[APPROXIMATE_ZERO_CROSSING + i] = (float)azc_val;
+            }
+        }
+    }
+}
+#endif // FXP_MODE
 
 
 //////////////////////////////////////////////////////////////////////////////////

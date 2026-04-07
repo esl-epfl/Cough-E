@@ -107,9 +107,12 @@ def update_main_h(audio_relpath, imu_relpath, bio_relpath):
 #  Compile & run
 # ──────────────────────────────────────────────
 
-def compile_c_app():
+def compile_c_app(extra_flags=""):
     """Compile the C application with EVALUATION_MODE enabled. Returns True on success."""
-    result = subprocess.run(["make", "-C", C_APP_DIR, "CFLAGS=-DEVALUATION_MODE"],
+    flags = "-DEVALUATION_MODE"
+    if extra_flags:
+        flags += " " + extra_flags
+    result = subprocess.run(["make", "-C", C_APP_DIR, f"CFLAGS={flags}"],
                             capture_output=True, text=True)
     if result.returncode != 0:
         print(f"  Compilation failed: {result.stderr}")
@@ -266,6 +269,8 @@ def score_recording(gt_events, pred_events, duration):
 def evaluate_recording(subj_id, trial, mov, noise, sound,
                        dataset_path, input_data_dir):
     """Full pipeline for a single recording: transform -> compile -> run -> parse -> score."""
+    if not hasattr(evaluate_recording, "_extra_flags"):
+        evaluate_recording._extra_flags = ""
     result = transform_recording(subj_id, trial, mov, noise, sound,
                                  dataset_path, input_data_dir)
     if result is None:
@@ -274,7 +279,7 @@ def evaluate_recording(subj_id, trial, mov, noise, sound,
     suffix, audio_relpath, imu_relpath, bio_relpath = result
     update_main_h(audio_relpath, imu_relpath, bio_relpath)
 
-    if not compile_c_app():
+    if not compile_c_app(extra_flags=evaluate_recording._extra_flags):
         print(f"  FAILED to compile for {suffix}")
         return None
 
@@ -484,6 +489,12 @@ def cmd_run(args):
     output_dir = args.output_dir or os.path.dirname(__file__)
     os.makedirs(output_dir, exist_ok=True)
 
+    if getattr(args, "fxp", False):
+        evaluate_recording._extra_flags = "-DFXP_MODE"
+        print("FxP mode enabled (-DFXP_MODE)")
+    else:
+        evaluate_recording._extra_flags = ""
+
     results = evaluate_subjects(
         args.dataset_path,
         subjects=args.subjects,
@@ -522,12 +533,86 @@ def cmd_full(args):
     cmd_run(args)
 
 
+def cmd_compare(args):
+    """Run float then FxP evaluation and print a side-by-side comparison."""
+    output_dir = args.output_dir or os.path.dirname(__file__)
+    os.makedirs(output_dir, exist_ok=True)
+
+    dataset_path = args.dataset_path
+
+    print("=== Float evaluation ===")
+    evaluate_recording._extra_flags = ""
+    float_results = evaluate_subjects(dataset_path, subjects=args.subjects,
+                                      sounds=args.sounds, noises=args.noises)
+    float_agg = compute_aggregate_metrics(float_results)
+
+    print("\n=== FxP evaluation ===")
+    evaluate_recording._extra_flags = "-DFXP_MODE"
+    fxp_results = evaluate_subjects(dataset_path, subjects=args.subjects,
+                                    sounds=args.sounds, noises=args.noises)
+    fxp_agg = compute_aggregate_metrics(fxp_results)
+
+    # Save individual CSVs
+    save_results_csv(float_results, os.path.join(output_dir, "results_float.csv"))
+    save_results_csv(fxp_results,   os.path.join(output_dir, "results_fxp.csv"))
+
+    # Print comparison
+    print("\n" + "=" * 70)
+    print("FLOAT vs FxP COMPARISON")
+    print("=" * 70)
+    fmt = "  {:<10} {:>8} {:>8} {:>8} {:>10}"
+    print(fmt.format("Mode", "SE", "PR", "F1", "FP/hr"))
+    print("  " + "-" * 46)
+    print(fmt.format("Float",
+                     f"{float_agg['se_evt']:.4f}",
+                     f"{float_agg['pr_evt']:.4f}",
+                     f"{float_agg['f1_evt']:.4f}",
+                     f"{float_agg['fphr_evt']:.1f}"))
+    print(fmt.format("FxP",
+                     f"{fxp_agg['se_evt']:.4f}",
+                     f"{fxp_agg['pr_evt']:.4f}",
+                     f"{fxp_agg['f1_evt']:.4f}",
+                     f"{fxp_agg['fphr_evt']:.1f}"))
+    delta_se = fxp_agg['se_evt'] - float_agg['se_evt']
+    delta_pr = fxp_agg['pr_evt'] - float_agg['pr_evt']
+    delta_f1 = fxp_agg['f1_evt'] - float_agg['f1_evt']
+    delta_fp = fxp_agg['fphr_evt'] - float_agg['fphr_evt']
+    print(fmt.format("Delta",
+                     f"{delta_se:+.4f}",
+                     f"{delta_pr:+.4f}",
+                     f"{delta_f1:+.4f}",
+                     f"{delta_fp:+.1f}"))
+    print("=" * 70)
+
+    # Save comparison JSON
+    import json
+    comparison = {
+        "timestamp": __import__("datetime").datetime.now().isoformat(),
+        "dataset": dataset_path,
+        "subjects": args.subjects,
+        "float": {k: round(float_agg[k], 4) if isinstance(float_agg[k], float)
+                  else float_agg[k] for k in float_agg},
+        "fxp":   {k: round(fxp_agg[k],   4) if isinstance(fxp_agg[k],   float)
+                  else fxp_agg[k]   for k in fxp_agg},
+        "delta": {
+            "se_evt":   round(delta_se, 4),
+            "pr_evt":   round(delta_pr, 4),
+            "f1_evt":   round(delta_f1, 4),
+            "fphr_evt": round(delta_fp, 1),
+        },
+    }
+    cmp_path = os.path.join(output_dir, "comparison_float_vs_fxp.json")
+    with open(cmp_path, "w") as f:
+        json.dump(comparison, f, indent=2)
+    print(f"\nComparison saved to {cmp_path}")
+
+
 def main():
     parser = argparse.ArgumentParser(
         description="Evaluate Cough-E C application against full_dataset_test")
     subparsers = parser.add_subparsers(dest="command")
 
-    def add_common_args(p):
+    def add_common_args(p, fxp_flag=False):
         p.add_argument("--dataset_path", type=str, default=DEFAULT_DATASET_PATH,
                         help=f"Path to full_dataset_test (default: {DEFAULT_DATASET_PATH})")
         p.add_argument("--subjects", nargs="+", type=str, default=None,
@@ -536,13 +621,16 @@ def main():
         p.add_argument("--noises", nargs="+", type=str, default=NOISES)
         p.add_argument("--output_dir", type=str, default=None,
                         help="Output directory (default: evaluation/)")
+        if fxp_flag:
+            p.add_argument("--fxp", action="store_true", default=False,
+                           help="Compile with -DFXP_MODE (fixed-point kernels)")
 
     p_transform = subparsers.add_parser("transform", help="Generate C headers from dataset")
     add_common_args(p_transform)
     p_transform.set_defaults(func=cmd_transform)
 
     p_run = subparsers.add_parser("run", help="Run evaluation")
-    add_common_args(p_run)
+    add_common_args(p_run, fxp_flag=True)
     p_run.set_defaults(func=cmd_run)
 
     p_agg = subparsers.add_parser("aggregate", help="Compute metrics from existing CSV")
@@ -550,14 +638,19 @@ def main():
     p_agg.set_defaults(func=cmd_aggregate)
 
     p_full = subparsers.add_parser("full", help="Transform dataset + run evaluation")
-    add_common_args(p_full)
+    add_common_args(p_full, fxp_flag=True)
     p_full.set_defaults(func=cmd_full)
+
+    p_compare = subparsers.add_parser("compare",
+                                      help="Run float and FxP evaluations side-by-side")
+    add_common_args(p_compare)
+    p_compare.set_defaults(func=cmd_compare)
 
     args = parser.parse_args()
 
-    # Default to 'full' when no subcommand given
+    # Default to 'compare' when no subcommand given
     if args.command is None:
-        args = parser.parse_args(["full"])
+        args = parser.parse_args(["compare"])
 
     args.func(args)
 
