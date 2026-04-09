@@ -251,14 +251,6 @@ int16_t azc_computation(float *sig, int16_t len, float epsilon){
         RA_IMU_LOG_ARRAY("azc", "diff", diff, approx_len - 1);
     }
 
-    // Log slope and intercept for each segment
-    for(int16_t i=0; i<approx_len-1; i++){
-        float slope = (approx_sig[i+1] - approx_sig[i]) / (timestamps[i+1] - timestamps[i]);
-        float intercept = approx_sig[i] - slope * timestamps[i];
-        RA_IMU_LOG_SCALAR("azc", "slope", slope);
-        RA_IMU_LOG_SCALAR("azc", "intercept", intercept);
-    }
-
     int16_t azc = 0;
 
     // Count the times the differentiation crosses the 0-axis

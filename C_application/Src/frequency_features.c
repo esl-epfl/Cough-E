@@ -130,12 +130,7 @@ void compute_periodogram(const float *sig, int16_t len, int16_t fs, float *psd, 
         RA_LOG_ARRAY("AUDIO_PSD", "periodogram", "im", im, psd_size);
 
         for(int16_t i=0; i<psd_size; i++){
-            mags_squared[i] = (re[i] * re[i]) + (im[i] * im[i]);
-        }
-        RA_LOG_ARRAY("AUDIO_PSD", "periodogram", "raw_mag_sq", mags_squared, psd_size);
-
-        for(int16_t i=0; i<psd_size; i++){
-            mags_squared[i] *= scale;
+            mags_squared[i] = ((re[i] * re[i]) + (im[i] * im[i])) * scale;
 
             if(i != 0 && i != (NPERSEG/2)){
                 mags_squared[i] *= 2;       // Multiply by 2, apart from DC frequency (first element) and last element

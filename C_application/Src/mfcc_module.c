@@ -73,6 +73,7 @@ void stft(const float *x, int16_t len, int16_t n_frames, float *res){
 
         kiss_fftr(cfg, column, cx_out);
 
+#ifdef RANGE_ANALYSIS
         // Log re and im separately for range analysis
         {
             float *re_tmp = (float*)malloc(FFT_RES_LEN * sizeof(float));
@@ -86,6 +87,7 @@ void stft(const float *x, int16_t len, int16_t n_frames, float *res){
             free(re_tmp);
             free(im_tmp);
         }
+#endif
 
         _cmplx_mag(cx_out, FFT_RES_LEN, column);
         RA_LOG_ARRAY("AUDIO_MEL", "stft", "cmplx_mag", column, FFT_RES_LEN);

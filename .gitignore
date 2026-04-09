@@ -12,10 +12,24 @@ C_application/input_data/*/
 # Evaluation output
 C_application/evaluation/results.csv
 C_application/evaluation/summary.json
+C_application/evaluation/results_float.csv
+C_application/evaluation/results_fxp.csv
+C_application/evaluation/comparison_float_vs_fxp.json
 
-# Range analysis output
-C_application/range_analysis/range_results.csv
-C_application/range_analysis/range_results.json
+# Range analysis output and scripts (FxP-Port branch only keeps the header)
+C_application/range_analysis/*.csv
+C_application/range_analysis/*.json
+C_application/range_analysis/*.py
+C_application/range_analysis/accuracy_results.csv
+C_application/range_analysis/accuracy_summary.csv
+C_application/range_analysis/precision_analysis.csv
+
+# FxP-Port branch notes
+C_application/port.md
+C_application/OVERLEAF.md
+
+# FxP-Port test artifacts
+C_application/test/
 
 # Local dataset
 datasets/

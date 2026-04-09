@@ -145,7 +145,9 @@ float vect_std(float *x, int16_t len){
     RA_IMU_LOG_SCALAR("vect_std", "sum_sq_dev", sum);
     float variance = sum / len;
     RA_IMU_LOG_SCALAR("vect_std", "variance", variance);
-    return sqrtf(variance);
+    float result = sqrtf(variance);
+    RA_IMU_LOG_SCALAR("vect_std", "result", result);
+    return result;
 }
 
 
@@ -383,22 +385,28 @@ float get_kurtosis(float *x, int16_t len){
     RA_IMU_LOG_SCALAR("get_kurtosis", "mean", mean);
     RA_IMU_LOG_SCALAR("get_kurtosis", "std", std);
 
-    float std4 = pow(std, 4);
-    RA_IMU_LOG_SCALAR("get_kurtosis", "std4", std4);
-
     float sum = 0.0;
+#ifdef RANGE_ANALYSIS
     float moment_max = 0.0;
+#endif
 
     for(int16_t i=0; i<len; i++){
         register float tmp = (x[i] - mean) * (x[i] - mean);
         float x4 = tmp * tmp;
+#ifdef RANGE_ANALYSIS
         if(x4 > moment_max)
             moment_max = x4;
+#endif
         sum += x4;
     }
 
+#ifdef RANGE_ANALYSIS
     RA_IMU_LOG_SCALAR("get_kurtosis", "moment_max", moment_max);
+#endif
     RA_IMU_LOG_SCALAR("get_kurtosis", "sum_x4", sum);
+
+    float std4 = pow(std, 4);
+    RA_IMU_LOG_SCALAR("get_kurtosis", "std4", std4);
 
     float result = (sum / (len * std4)) - KURT_FISHER_CONST;
     RA_IMU_LOG_SCALAR("get_kurtosis", "result", result);
