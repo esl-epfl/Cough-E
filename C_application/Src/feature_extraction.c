@@ -641,26 +641,19 @@ void imu_signal_features_fxp(const int8_t *features_selector, const void *sig,
     }
 
     // ── Zero Crossing Rate ────────────────────────────────────────────────────
-    // ZCR only tests sign, so we convert the FxP buffer back to float to reuse
-    // the existing compute_zrc() implementation unchanged.
+    // RAW (signed): detect sign changes directly on Q11.5 integers.
+    // L2_A / L2_G (unsigned): always positive, ZCR = 0 by definition.
     if(features_selector[ZERO_CROSSING_RATE_IMU]){
-        float *tmp = (float*)malloc(len * sizeof(float));
         switch(sig_type){
             case FXP_SIG_RAW:
-                for(int16_t i = 0; i < len; i++)
-                    tmp[i] = FXP_TO_FLOAT(((const q11_5_t*)sig)[i],  5);
+                feats[ZERO_CROSSING_RATE_IMU] =
+                    fxp_compute_zrc_raw((const q11_5_t*)sig, len);
                 break;
             case FXP_SIG_L2A:
-                for(int16_t i = 0; i < len; i++)
-                    tmp[i] = FXP_TO_FLOAT(((const uq10_6_t*)sig)[i], 6);
-                break;
             case FXP_SIG_L2G:
-                for(int16_t i = 0; i < len; i++)
-                    tmp[i] = FXP_TO_FLOAT(((const uq5_11_t*)sig)[i], 11);
+                feats[ZERO_CROSSING_RATE_IMU] = 0.0f;
                 break;
         }
-        feats[ZERO_CROSSING_RATE_IMU] = compute_zrc(tmp, len);
-        free(tmp);
     }
 
     // ── Kurtosis (RAW only) ──────────────────────────────────────────────────

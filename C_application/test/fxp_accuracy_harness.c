@@ -97,6 +97,19 @@ int main(void)
             "ACCEL_X","ACCEL_Y","ACCEL_Z","GYRO_Y","GYRO_P","GYRO_R"
         };
 
+        // ── ZCR (RAW only — unsigned signals always give ZCR=0) ──────────
+        for (int ax = 0; ax < 6; ax++) {
+            float fv = compute_zrc(raw[ax], WIN_LEN);
+            float xv = fxp_compute_zrc_raw(raw_fxp[ax], WIN_LEN);
+            emit(w, "compute_zrc", ax_names[ax], fv, xv);
+        }
+
+        // ── L2 norm (first sample per window as representative) ──────────
+        emit(w, "L2_norm", "COMBO_ACCEL", l2a_f[0],
+             FXP_TO_FLOAT(l2a_fxp[0], 6));
+        emit(w, "L2_norm", "COMBO_GYRO",  l2g_f[0],
+             FXP_TO_FLOAT(l2g_fxp[0], 11));
+
         // ── RMS ───────────────────────────────────────────────────────────
         for (int ax = 0; ax < 6; ax++) {
             float fv = get_rms(raw[ax], WIN_LEN);

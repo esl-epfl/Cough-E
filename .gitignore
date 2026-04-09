@@ -10,6 +10,9 @@ C_application/build/
 C_application/test/fxp_test_imu
 C_application/test/fxp_test_imu.dSYM/
 C_application/test/__pycache__/
+C_application/test/fxp_accuracy_harness.dSYM/
+C_application/test/fxp_test_imu.dSYM/
+C_application/test/fxp_accuracy_harness/
 
 # Range/precision/accuracy analysis outputs (generated, not source)
 C_application/range_analysis/precision_analysis.csv
