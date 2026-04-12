@@ -50,23 +50,24 @@ void stft(const float *x, int16_t len, int16_t n_frames, float *res){
     reflect_padding(x, len, PAD_LEN, padded);
 
     float *column = (float*)malloc(N_FFT * sizeof(float));
-    float *fft_res = (float*)malloc(FFT_RES_LEN * sizeof(float));
+#ifdef FIXED_POINT
+    /* Q2.14 input buffer required by FIXED_POINT=16 KissFFT. */
+    kiss_fft_scalar *col_q14 = (kiss_fft_scalar*)malloc(N_FFT * sizeof(kiss_fft_scalar));
+#endif
 
     // initialize RFFT structures
     kiss_fftr_cfg cfg = kiss_fftr_alloc(N_FFT, 0, 0, 0);
-    kiss_fft_cpx *cx_out = (kiss_fft_cpx*)malloc(N_FFT *sizeof(kiss_fft_cpx));
+    kiss_fft_cpx *cx_out = (kiss_fft_cpx*)malloc(N_FFT * sizeof(kiss_fft_cpx));
+    float *fft_res = (float*)malloc(FFT_RES_LEN * sizeof(float));
 
     for(int16_t i=0; i<n_frames; i++){
 
         // get the i-th column of the padded input (i.e. i-th frame)
-        // Basically the framing is considered to produce a matrix, each
-        // column is a frame to process. It's done like this in order to
-        // be compliant with the python code
         for(int16_t j=0; j<N_FFT; j++){
             column[j] = padded[j + (i*HOP_LEN)];
         }
 
-        // apply the window
+        // apply the Hann window
         vect_mult(column, hann_mfcc_wind, N_FFT, column);
 
         RA_LOG_ARRAY("AUDIO_MEL", "stft", "windowed_frame", column, N_FFT);
@@ -102,7 +103,7 @@ void stft(const float *x, int16_t len, int16_t n_frames, float *res){
         for(int16_t j=0; j<FFT_RES_LEN; j++){
             res[(i * FFT_RES_LEN) + j] = column[j];
         }
-
+#endif
     }
 
     free(cfg);
@@ -110,6 +111,9 @@ void stft(const float *x, int16_t len, int16_t n_frames, float *res){
     free(padded);
     free(column);
     free(fft_res);
+#ifdef FIXED_POINT
+    free(col_q14);
+#endif
 }
 
 

@@ -11,8 +11,17 @@ C_application/test/fxp_test_imu
 C_application/test/fxp_test_imu.dSYM/
 C_application/test/__pycache__/
 C_application/test/fxp_accuracy_harness.dSYM/
-C_application/test/fxp_test_imu.dSYM/
 C_application/test/fxp_accuracy_harness/
+C_application/test/kissfft_fxp_verify
+C_application/test/kissfft_fxp_verify.dSYM/
+C_application/test/kissfft_fxp_impulse
+C_application/test/kissfft_fxp_impulse.dSYM/
+
+# FxP audio pipeline test sources (work in progress)
+C_application/test/kissfft_fxp_impulse.c
+C_application/test/kissfft_fxp_verify.c
+C_application/kiss_fftr/gen_twiddles_q15.py
+C_application/kiss_fftr/twiddles_win08_fs8000_q15.h
 
 # Range/precision/accuracy analysis outputs (generated, not source)
 C_application/range_analysis/precision_analysis.csv

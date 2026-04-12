@@ -490,8 +490,8 @@ def cmd_run(args):
     os.makedirs(output_dir, exist_ok=True)
 
     if getattr(args, "fxp", False):
-        evaluate_recording._extra_flags = "-DFXP_MODE"
-        print("FxP mode enabled (-DFXP_MODE)")
+        evaluate_recording._extra_flags = "-DFXP_MODE -DFIXED_POINT=16"
+        print("FxP mode enabled (-DFXP_MODE -DFIXED_POINT=16)")
     else:
         evaluate_recording._extra_flags = ""
 
@@ -547,7 +547,7 @@ def cmd_compare(args):
     float_agg = compute_aggregate_metrics(float_results)
 
     print("\n=== FxP evaluation ===")
-    evaluate_recording._extra_flags = "-DFXP_MODE"
+    evaluate_recording._extra_flags = "-DFXP_MODE -DFIXED_POINT=16"
     fxp_results = evaluate_subjects(dataset_path, subjects=args.subjects,
                                     sounds=args.sounds, noises=args.noises)
     fxp_agg = compute_aggregate_metrics(fxp_results)

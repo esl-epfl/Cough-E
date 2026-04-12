@@ -13,15 +13,22 @@
 #include <audio_features.h>
 
 #include <kiss_fftr.h>
+#ifdef FIXED_POINT
+#  include <fxp.h>
+#endif
 #include <range_analysis.h>
 
 
 /*
     Helper function not callable externally.
-    This just computes the RFFT of the input signal and 
-    stores the Real and Imaginary parts in two separate arrays
+    Float build:  stores re/im as float (original behaviour).
+    FxP build:    converts input to Q2.14, stores re/im as int32_t Q12.20.
 */
+#ifdef FIXED_POINT
+void _rfft(const float *sig, int16_t len, int32_t *real, int32_t *imag);
+#else
 void _rfft(const float *sig, int16_t len, float *real, float *imag);
+#endif
 
 
 void compute_rfft(const float *sig, int16_t len, int16_t fs, float *mags, float *freqs, float *sum_mags){
@@ -30,7 +37,6 @@ void compute_rfft(const float *sig, int16_t len, int16_t fs, float *mags, float 
 
     float *re = (float*)malloc(len * sizeof(float));
     float *im = (float*)malloc(len * sizeof(float));
-
     _rfft(sig, len, re, im);
 
     int16_t fft_size = (len/2)+1;
@@ -59,6 +65,39 @@ void compute_rfft(const float *sig, int16_t len, int16_t fs, float *mags, float 
 
 
 
+#ifdef FIXED_POINT
+void _rfft(const float *sig, int16_t len, int32_t *real, int32_t *imag){
+
+    kiss_fftr_cfg cfg = kiss_fftr_alloc(len, 0, 0, 0);
+    kiss_fft_cpx *cx_out = (kiss_fft_cpx *) malloc(len * sizeof(kiss_fft_cpx));
+
+    /* Convert float input to Q2.14 (int16_t) as required by FIXED_POINT=16. */
+    kiss_fft_scalar *in_q14 = (kiss_fft_scalar *) malloc(len * sizeof(kiss_fft_scalar));
+    for (int16_t i = 0; i < len; i++) {
+        int32_t v = (int32_t)(sig[i] * 16384.0f + 0.5f);
+        if (v >  32767) v =  32767;
+        if (v < -32768) v = -32768;
+        in_q14[i] = (kiss_fft_scalar)v;
+    }
+
+    kiss_fftr(cfg, in_q14, cx_out);
+
+    /*
+     * KissFFT FIXED_POINT=16: output is DFT(v)/N in Q1.15,
+     * where v = x_float × 2^14 (Q2.14 input).
+     * To recover DFT(x_float) in Q12.20:  re_q12_20 = cx_out[k].r × N × 2^6.
+     * Overflow guard: use int64_t intermediate (6400 × 32767 × 64 < 2^36 ✓).
+     */
+    for (int16_t i = 0; i < len; i++) {
+        real[i] = (int32_t)(((int64_t)cx_out[i].r * len) << 6);
+        imag[i] = (int32_t)(((int64_t)cx_out[i].i * len) << 6);
+    }
+
+    free(in_q14);
+    free(cfg);
+    free(cx_out);
+}
+#else
 void _rfft(const float *sig, int16_t len, float *real, float *imag){
 
     kiss_fftr_cfg cfg = kiss_fftr_alloc(len, 0, 0, 0);
@@ -74,6 +113,7 @@ void _rfft(const float *sig, int16_t len, float *real, float *imag){
     free(cfg);
     free(cx_out);
 }
+#endif
 
 
 
@@ -84,9 +124,13 @@ void compute_periodogram(const float *sig, int16_t len, int16_t fs, float *psd, 
     float *cumul_sums = (float*)malloc(NPERSEG * sizeof(float));  // To store the cumulative sum of the FFT of each frequency bin
     memset(cumul_sums, 0, NPERSEG * sizeof(float));
 
-    // To store the real and imaginary parts of each FFT
+#ifdef FIXED_POINT
+    int32_t *re = (int32_t*)malloc(NPERSEG * sizeof(int32_t));
+    int32_t *im = (int32_t*)malloc(NPERSEG * sizeof(int32_t));
+#else
     float *re = (float*)malloc(NPERSEG * sizeof(float));
     float *im = (float*)malloc(NPERSEG * sizeof(float));
+#endif
 
     // To store the magnitudes squared after the FFT
     float *mags_squared = (float*)malloc(((NPERSEG/2)+1) * sizeof(float));
