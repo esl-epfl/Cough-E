@@ -471,8 +471,8 @@ void entropy_calc(float *x, int16_t len, uint8_t base){
 #ifdef FXP_MODE
 
 // Line length: RAW (Q11.5) -> UQ3.23 (32-bit); L2_G (UQ5.11) -> UQ2.9 (16-bit)
-FXP_DEFINE_GET_LINE_LENGTH(raw, uq3_23_t, q11_5_t,  fxp_ll_raw_diff_to_accum, fxp_ll_raw_result)
-FXP_DEFINE_GET_LINE_LENGTH(l2g, uq2_9_t,  uq5_11_t, fxp_ll_l2g_diff_to_accum, fxp_ll_l2g_result)
+FXP_DEFINE_GET_LINE_LENGTH(raw, uq3_23_t, q11_5_t,  fxp_linelen_raw_diff_to_accum, fxp_linelen_raw_result)
+FXP_DEFINE_GET_LINE_LENGTH(l2g, uq2_9_t,  uq5_11_t, fxp_linelen_l2g_diff_to_accum, fxp_linelen_l2g_result)
 
 // Kurtosis: RAW only
 FXP_DEFINE_GET_KURTOSIS_RAW()

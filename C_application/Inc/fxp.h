@@ -1,7 +1,6 @@
 #pragma once
 
 #include <stdint.h>
-#include <math.h>
 #include <stdlib.h>
 
 // =============================================================================
@@ -25,18 +24,7 @@
 // =============================================================================
 
 // =============================================================================
-// Section 1 — Signal type enum
-// =============================================================================
-
-typedef enum
-{
-    FXP_SIG_RAW, // Individual IMU axis,      Q11.5  (16-bit)
-    FXP_SIG_L2A, // L2 norm of accel axes,    UQ10.6 (16-bit)
-    FXP_SIG_L2G  // L2 norm of gyro axes,     UQ5.11 (16-bit)
-} fxp_sig_type_t;
-
-// =============================================================================
-// Section 2 — Type aliases
+// Section 1 — Type aliases
 // =============================================================================
 
 typedef int16_t q11_5_t;   // RAW axis signal,             Q11.5  (16-bit)
@@ -49,14 +37,19 @@ typedef uint32_t uq4_22_t;  // variance,                    UQ4.22 (32-bit)
 typedef uint16_t uq2_11_t;  // standard deviation,          UQ2.11 (16-bit)
 typedef uint64_t uq8_44_t;  // std^4,                       UQ8.44 (64-bit)
 typedef uint64_t uq14_44_t; // N * std^4,                   UQ14.44 (64-bit)
-typedef int64_t q6_30_t;    // kurtosis result,             Q6.30  (64-bit) [was Q6.22; widened for model fidelity]
+// Kurtosis result widened from OVERLEAF's Q5.22 to Q6.30 for model fidelity.
+typedef int64_t q6_30_t;    // kurtosis result,             Q6.30  (64-bit)
 
-typedef uint32_t uq11_16_t; // RMS result (RAW),            UQ11.16 (32-bit) [was UQ13.3; widened for model fidelity]
+// RMS result types.
+// RAW is widened from OVERLEAF's UQ13.3 to UQ11.16 for model fidelity (more
+// fractional bits preserve small-signal RMS values that the classifier uses).
+typedef uint32_t uq11_16_t; // RMS result (RAW),            UQ11.16 (32-bit)
 typedef uint16_t uq13_3_t;  // RMS result (L2_A),           UQ13.3 (16-bit)
 typedef uint16_t uq7_9_t;   // RMS result (L2_G),           UQ7.9  (16-bit)
 
 typedef uint32_t uq2_14_t; // crest factor result,         UQ2.14 (32-bit)
-typedef uint32_t uq3_23_t; // line length result (RAW),    UQ3.23 (32-bit) [was UQ2.9; widened for model fidelity]
+// Line length RAW widened from OVERLEAF's UQ2.9 to UQ3.23 for model fidelity.
+typedef uint32_t uq3_23_t; // line length result (RAW),    UQ3.23 (32-bit)
 typedef uint16_t uq2_9_t;  // line length result (L2_G),   UQ2.9  (16-bit)
 
 // =============================================================================
@@ -107,16 +100,74 @@ static inline uint32_t fxp_div_u32(uint32_t num, uint32_t denom, int extra)
     return (num << extra) / denom;
 }
 
-// Square root (placeholder — sqrtf; replace with integer isqrt later)
-// Output fractional bits = floor(input fractional bits / 2)
-static inline uint32_t fxp_sqrt32(uint32_t x) { return (uint32_t)sqrtf((float)x); }
-static inline uint64_t fxp_sqrt64(uint64_t x) { return (uint64_t)sqrtf((double)x); }
+// Integer square root — Newton-Raphson, no floating point, no __uint128_t.
+//
+// Internal floor-only helpers (not for external use).
+// Public fxp_sqrt32 / fxp_sqrt64 round to nearest (matching sqrtf behaviour).
+//
+// Inputs are Q-format integer accumulators; isqrt keeps the result in the
+// integer domain without a float conversion round-trip.
+//
+// Rounding without wider types:
+//   After N-R converges, r = floor(sqrt(x)).  Let d = x - r^2.
+//   Round up iff d > (r+1)^2 - x = 2r+1-d, i.e. 2d > 2r+1, i.e. d > r.
+//   d < 2r+1, so it fits in 64 bits — no overflow.
+static inline uint32_t _fxp_isqrt32(uint32_t x)
+{
+    if (x == 0) return 0;
+    uint32_t bits = 32 - __builtin_clz(x);
+    uint32_t r = (uint32_t)1 << ((bits + 1) >> 1);  // 2^ceil(bits/2) >= sqrt(x)
+    for (;;) {
+        uint32_t q = x / r;
+        if (r <= q) break;
+        r = (r + q) >> 1;
+    }
+    return r;  // floor(sqrt(x))
+}
+
+static inline uint64_t _fxp_isqrt64(uint64_t x)
+{
+    if (x == 0) return 0;
+    uint32_t hi = (uint32_t)(x >> 32);
+    uint64_t r;
+    if (hi != 0) {
+        // seed from floor(sqrt(hi))+1, shifted left 16: overestimates sqrt(x)
+        r = ((uint64_t)_fxp_isqrt32(hi) + 1) << 16;
+    } else {
+        r = (uint64_t)_fxp_isqrt32((uint32_t)x) + 1;
+    }
+    for (;;) {
+        uint64_t q = x / r;
+        if (r <= q) break;
+        r = (r + q) >> 1;
+    }
+    return r;  // floor(sqrt(x))
+}
+
+static inline uint32_t fxp_sqrt32(uint32_t x)
+{
+    uint32_t r = _fxp_isqrt32(x);
+    // round to nearest: d = x - r^2; round up iff d > r (see comment above)
+    uint64_t d = (uint64_t)x - (uint64_t)r * r;
+    if (d > r) r++;
+    return r;
+}
+
+static inline uint64_t fxp_sqrt64(uint64_t x)
+{
+    uint64_t r = _fxp_isqrt64(x);
+    // round to nearest: d = x - r^2; round up iff d > r
+    // d < 2r+1, r < 2^32, so d fits safely in uint64_t
+    uint64_t d = x - r * r;
+    if (d > r) r++;
+    return r;
+}
 
 static inline int32_t fxp_abs_s32(int32_t x) { return x < 0 ? -x : x; }
 static inline int16_t fxp_abs_s16(int16_t x) { return x < 0 ? -x : x; }
 
-// Convenience aliases matching old macro style (used in kernel-op helpers below)
-#define FXP_ABS(x) ((x) < 0 ? -(x) : (x))
+// Note: use fxp_abs_s32 / fxp_abs_s16 instead of a macro to avoid
+// double-evaluation. The old FXP_ABS macro has been removed.
 
 // =============================================================================
 // Section 6 — Per-kernel operation helpers  (static inline)
@@ -129,12 +180,13 @@ static inline int16_t fxp_abs_s16(int16_t x) { return x < 0 ? -x : x; }
 // RAW (Q11.5): accumulate |diff| values (Q11.5 integer units) without shifting.
 //   After loop: (uint64)(accum) << 18 / (N-1) -> UQ3.23.
 //   The <<18 promotes from 5 frac bits to 23 frac bits (gain of 18).
-static inline uint32_t fxp_ll_raw_diff_to_accum(int32_t diff)
+//   NOTE: OVERLEAF specifies UQ2.9; implementation widens to UQ3.23 for model fidelity.
+static inline uint32_t fxp_linelen_raw_diff_to_accum(int32_t diff)
 {
     return (uint32_t)fxp_abs_s32(diff);
 } // no early shift
 
-static inline uq3_23_t fxp_ll_raw_result(uint32_t accum, int16_t N)
+static inline uq3_23_t fxp_linelen_raw_result(uint32_t accum, int16_t N)
 {
     return (uq3_23_t)(((uint64_t)accum << 18) / (uint32_t)N);
 }
@@ -142,17 +194,13 @@ static inline uq3_23_t fxp_ll_raw_result(uint32_t accum, int16_t N)
 // L2_G (UQ5.11): diff is in UQ5.11 integer units (11 frac bits).
 //   SR(2): 11 - 2 = 9 frac bits remaining -> accumulator has 9 frac bits.
 //   Result cast to UQ2.9 is then consistent (9 frac bits).
-static inline int16_t fxp_ll_l2g_to_signed(uq5_11_t x)
-{
-    return (int16_t)(x >> 1);
-}
-static inline uint32_t fxp_ll_l2g_diff_to_accum(int32_t diff)
+static inline uint32_t fxp_linelen_l2g_diff_to_accum(int32_t diff)
 {
     return (uint32_t)fxp_abs_s32(diff) >> 2;
 }
 
 // L2_G: accum / N -> UQ2.9
-static inline uq2_9_t fxp_ll_l2g_result(uint32_t accum, int16_t N)
+static inline uq2_9_t fxp_linelen_l2g_result(uint32_t accum, int16_t N)
 {
     return (uq2_9_t)(accum / (uint32_t)N);
 }
@@ -212,16 +260,16 @@ static inline uq14_44_t fxp_kurt_denom(uint64_t std4, int16_t N)
 }
 
 // Fourth moment: centred^2 = UQ8.10; centred^4 = UQ16.20
-// x2 can reach ~84000 (c=291), so x4 = x2*x2 can reach ~7e9 > uint32_t.
-// Cast x2 to uint64_t before squaring to avoid overflow.
-// sum_x4 can exceed uint32 (50 * max_x4 ~ 3.6e11), accumulate in uint64.
-static inline uint64_t fxp_kurt_x2(int16_t c)
+// c2 can reach ~84000 (c=291), so c4 = c2*c2 can reach ~7e9 > uint32_t.
+// Cast c2 to uint64_t before squaring to avoid overflow.
+// sum_c4 can exceed uint32 (50 * max_c4 ~ 3.6e11), accumulate in uint64.
+static inline uint64_t fxp_kurt_c2(int16_t c)
 {
     return (uint64_t)fxp_mul_s32(c, c);
 }
-static inline uint64_t fxp_kurt_x4(uint64_t x2)
+static inline uint64_t fxp_kurt_c4(uint64_t c2)
 {
-    return fxp_mul_u64(x2, x2);
+    return fxp_mul_u64(c2, c2);
 }
 
 // Result in Q6.30:
@@ -298,7 +346,9 @@ static inline uq2_14_t fxp_cf_l2g_result(uq5_11_t peak, uq7_9_t rms)
 // For signed signals (RAW/Q11.5): count sign changes between consecutive
 // samples.  No float conversion needed — just check sign bits.
 // For unsigned signals (L2_A, L2_G): always positive, ZCR = 0 by definition.
-static inline float fxp_compute_zrc_raw(const q11_5_t *sig, int16_t len)
+// NOTE: returns float — ZCR is inherently a ratio in [0,1]; the model
+// consumes it as float regardless of mode.  See pipeline audit notes.
+static inline float fxp_compute_zcr_raw(const q11_5_t *sig, int16_t len)
 {
     int sum = 0;
     for (int16_t i = 0; i < len - 1; i++)
@@ -404,7 +454,7 @@ static inline int32_t fxp_azc_diff(int32_t a, int32_t b, int16_t gap)
         for (int16_t _i = 0; _i < len; _i++)                                     \
         {                                                                        \
             int16_t _c = fxp_kurt_centred(sig[_i], _mean_q10);                   \
-            _sum_x4 += fxp_kurt_x4(fxp_kurt_x2(_c));                             \
+            _sum_x4 += fxp_kurt_c4(fxp_kurt_c2(_c));                             \
         }                                                                        \
         return fxp_kurt_result(_sum_x4, _denom);                                 \
     }

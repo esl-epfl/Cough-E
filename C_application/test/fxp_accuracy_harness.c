@@ -100,7 +100,7 @@ int main(void)
         // ── ZCR (RAW only — unsigned signals always give ZCR=0) ──────────
         for (int ax = 0; ax < 6; ax++) {
             float fv = compute_zrc(raw[ax], WIN_LEN);
-            float xv = fxp_compute_zrc_raw(raw_fxp[ax], WIN_LEN);
+            float xv = fxp_compute_zcr_raw(raw_fxp[ax], WIN_LEN);
             emit(w, "compute_zrc", ax_names[ax], fv, xv);
         }
 
