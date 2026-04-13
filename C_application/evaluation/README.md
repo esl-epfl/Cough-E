@@ -47,6 +47,11 @@ python C_application/evaluation/transform_dataset.py --dataset_path /path/to/ful
 python C_application/evaluation/evaluate.py run --dataset_path /path/to/full_dataset_test
 ```
 
+#### Run IMU fixed-point evaluation (audio remains float)
+```
+python C_application/evaluation/evaluate.py run --fxp --dataset_path /path/to/full_dataset_test
+```
+
 #### Aggregate metrics from an existing results CSV
 ```
 python C_application/evaluation/evaluate.py aggregate --csv C_application/evaluation/results.csv

@@ -19,6 +19,7 @@
 const char *_ra_imu_signal_ctx = "UNKNOWN";
 int _ra_imu_active = 0;
 #endif
+#include <imu/imu_dispatch.h>
 
 
 //////////////////////////////////////////////////////////////////////////////////
@@ -131,6 +132,11 @@ void imu_signal_features(const int8_t *features_selector, float *sig, int16_t le
     @param sig_feat_idx         :   starting index of the features for the IMU signal inside the features_selector vector
     @param *feats               :   array of extracted features
 */
+#ifdef FXP_MODE
+void compute_imu_family_fxp(const int8_t *features_selector, const q11_5_t signal[][Num_IMU_signals], int16_t len, int8_t signal_idx, int8_t sig_feat_idx, float *feats);
+void fxp_convert_imu_inputs(const float sig[][Num_IMU_signals], int16_t len,
+                            q11_5_t raw[][Num_IMU_signals], uq10_6_t *l2a, uq5_11_t *l2g);
+#endif
 void compute_imu_family(const int8_t *features_selector, const float signal[][Num_IMU_signals], int16_t len, int8_t signal_idx, int8_t sig_feat_idx, float *feats);
 
 //////////////////////////////////////////////////////////////////////////////////
@@ -425,9 +431,42 @@ void eepd_features(const int8_t *features_selector, const float *sig, int16_t le
 void imu_signal_features(const int8_t *features_selector, float *sig, int16_t len, float *feats){
 
     imu_sig_float_t s = { .data = sig, .len = len };
-    IMU_SIGNAL_FEATURES(features_selector, s, feats);
+    imu_run_feature_table(features_selector, imu_view_from_float(s), feats);
 }
 
+
+#ifdef FXP_MODE
+void fxp_convert_imu_inputs(const float sig[][Num_IMU_signals], int16_t len,
+                            q11_5_t raw[][Num_IMU_signals], uq10_6_t *l2a, uq5_11_t *l2g)
+{
+    for (int16_t i = 0; i < len; i++) {
+        // Single conversion boundary from float into fixed-point IMU carriers.
+        raw[i][0] = FXP_IMU_RAW_FROM_FLOAT(sig[i][0]);
+        raw[i][1] = FXP_IMU_RAW_FROM_FLOAT(sig[i][1]);
+        raw[i][2] = FXP_IMU_RAW_FROM_FLOAT(sig[i][2]);
+        raw[i][3] = FXP_IMU_RAW_FROM_FLOAT(sig[i][3]);
+        raw[i][4] = FXP_IMU_RAW_FROM_FLOAT(sig[i][4]);
+        raw[i][5] = FXP_IMU_RAW_FROM_FLOAT(sig[i][5]);
+
+        l2a[i] = fxp_l2_norm_accel_from_raw(raw[i][0], raw[i][1], raw[i][2]);
+        l2g[i] = fxp_l2_norm_gyro_from_raw(raw[i][3], raw[i][4], raw[i][5]);
+    }
+}
+
+void compute_imu_family_fxp(const int8_t *features_selector, const q11_5_t signal[][Num_IMU_signals], int16_t len, int8_t signal_idx, int8_t sig_feat_idx, float *feats){
+
+    if(is_required(features_selector, sig_feat_idx, sig_feat_idx+Num_imu_feat_families-1)){
+        q11_5_t *signal_samples = (q11_5_t*)malloc((size_t)len * sizeof(q11_5_t));
+        for(int16_t i=0; i<len; i++){
+            signal_samples[i] = signal[i][signal_idx];
+        }
+
+        imu_sig_raw_t s = { .data = signal_samples, .len = len };
+        imu_run_feature_table(&features_selector[sig_feat_idx], imu_view_from_raw(s), &feats[sig_feat_idx]);
+        free(signal_samples);
+    }
+}
+#endif
 
 #ifdef RANGE_ANALYSIS
 static const char *_imu_signal_names[] = {
@@ -465,8 +504,7 @@ void compute_imu_family(const int8_t *features_selector, const float signal[][Nu
 
         RA_SET_IMU_CTX("IMU_RAW");
         imu_sig_float_t s = { .data = signal_samples, .len = len };
-        IMU_SIGNAL_FEATURES(&features_selector[sig_feat_idx], s, &feats[sig_feat_idx]);
-#endif
+        imu_run_feature_table(&features_selector[sig_feat_idx], imu_view_from_float(s), &feats[sig_feat_idx]);
         free(signal_samples);
         RA_CLEAR_IMU_CTX();
     }
@@ -508,7 +546,33 @@ void imu_features(const int8_t *features_selector, const float sig[][Num_IMU_sig
 
     // Here len is the IMU_DIM_1 macro in the hardcoded samples
 
-    // ACCEL_X
+#ifdef FXP_MODE
+    q11_5_t (*raw_fxp)[Num_IMU_signals] = (q11_5_t (*)[Num_IMU_signals])malloc((size_t)len * sizeof(*raw_fxp));
+    uq10_6_t *combo_l2a = (uq10_6_t*)malloc((size_t)len * sizeof(uq10_6_t));
+    uq5_11_t *combo_l2g = (uq5_11_t*)malloc((size_t)len * sizeof(uq5_11_t));
+
+    fxp_convert_imu_inputs(sig, len, raw_fxp, combo_l2a, combo_l2g);
+
+    // Raw-axis families
+    compute_imu_family_fxp(features_selector, raw_fxp, len, ACCELEROMETER_X, ACCEL_X_FEAT, feats);
+    compute_imu_family_fxp(features_selector, raw_fxp, len, ACCELEROMETER_Y, ACCEL_Y_FEAT, feats);
+    compute_imu_family_fxp(features_selector, raw_fxp, len, ACCELEROMETER_Z, ACCEL_Z_FEAT, feats);
+    compute_imu_family_fxp(features_selector, raw_fxp, len, GYROSCOPE_Y, GYRO_Y_FEAT, feats);
+    compute_imu_family_fxp(features_selector, raw_fxp, len, GYROSCOPE_P, GYRO_P_FEAT, feats);
+    compute_imu_family_fxp(features_selector, raw_fxp, len, GYROSCOPE_R, GYRO_R_FEAT, feats);
+
+    // Combined signals
+    imu_sig_l2a_t s_l2a = { .data = combo_l2a, .len = len };
+    imu_run_feature_table(&features_selector[ACCEL_COMBO], imu_view_from_l2a(s_l2a), &feats[ACCEL_COMBO]);
+
+    imu_sig_l2g_t s_l2g = { .data = combo_l2g, .len = len };
+    imu_run_feature_table(&features_selector[GYRO_COMBO], imu_view_from_l2g(s_l2g), &feats[GYRO_COMBO]);
+
+    free(combo_l2g);
+    free(combo_l2a);
+    free(raw_fxp);
+#else
+    // ACCEL_X  
     compute_imu_family(features_selector, sig, len, ACCELEROMETER_X, ACCEL_X_FEAT, feats);
 
     // ACCEL_Y
@@ -528,25 +592,6 @@ void imu_features(const int8_t *features_selector, const float sig[][Num_IMU_sig
     // GYRO_R
     compute_imu_family(features_selector, sig, len, GYROSCOPE_R, GYRO_R_FEAT, feats);
 
-#ifdef FXP_MODE
-    // L2_A: compute FxP L2 norm sample-by-sample (3 accel axes -> UQ10.6)
-    uq10_6_t *combo_l2a = (uq10_6_t*)malloc(len * sizeof(uq10_6_t));
-    for(int16_t i=0; i<len; i++){
-        combo_l2a[i] = fxp_l2_norm_accel(sig[i][0], sig[i][1], sig[i][2]);
-    }
-    imu_sig_l2a_t s_l2a = { .data = combo_l2a, .len = len };
-    IMU_SIGNAL_FEATURES(&features_selector[ACCEL_COMBO], s_l2a, &feats[ACCEL_COMBO]);
-    free(combo_l2a);
-
-    // L2_G: compute FxP L2 norm sample-by-sample (3 gyro axes -> UQ5.11)
-    uq5_11_t *combo_l2g = (uq5_11_t*)malloc(len * sizeof(uq5_11_t));
-    for(int16_t i=0; i<len; i++){
-        combo_l2g[i] = fxp_l2_norm_gyro(sig[i][3], sig[i][4], sig[i][5]);
-    }
-    imu_sig_l2g_t s_l2g = { .data = combo_l2g, .len = len };
-    IMU_SIGNAL_FEATURES(&features_selector[GYRO_COMBO], s_l2g, &feats[GYRO_COMBO]);
-    free(combo_l2g);
-#else
     // Combine signals via L2 norm (float mode)
     float *combo_signal = (float*)malloc(len * sizeof(float));
 
@@ -556,7 +601,7 @@ void imu_features(const int8_t *features_selector, const float sig[][Num_IMU_sig
     }
     RA_IMU_LOG_ARRAY("imu_features", "sig_input", combo_signal, len);
     imu_sig_float_t s_accel = { .data = combo_signal, .len = len };
-    IMU_SIGNAL_FEATURES(&features_selector[ACCEL_COMBO], s_accel, &feats[ACCEL_COMBO]);
+    imu_run_feature_table(&features_selector[ACCEL_COMBO], imu_view_from_float(s_accel), &feats[ACCEL_COMBO]);
     RA_CLEAR_IMU_CTX();
 
     RA_SET_IMU_CTX("IMU_L2_GYRO");
@@ -565,7 +610,7 @@ void imu_features(const int8_t *features_selector, const float sig[][Num_IMU_sig
     }
     RA_IMU_LOG_ARRAY("imu_features", "sig_input", combo_signal, len);
     imu_sig_float_t s_gyro = { .data = combo_signal, .len = len };
-    IMU_SIGNAL_FEATURES(&features_selector[GYRO_COMBO], s_gyro, &feats[GYRO_COMBO]);
+    imu_run_feature_table(&features_selector[GYRO_COMBO], imu_view_from_float(s_gyro), &feats[GYRO_COMBO]);
     RA_CLEAR_IMU_CTX();
 
     free(combo_signal);

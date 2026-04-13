@@ -463,22 +463,3 @@ void entropy_calc(float *x, int16_t len, uint8_t base){
         }
     }
 }
-
-
-// =============================================================================
-// Fixed-point kernel instantiations (helpers.c owns: line_length, kurtosis, l2_norm)
-// =============================================================================
-#ifdef FXP_MODE
-
-// Line length: Q11.5 -> UQ9.23 (SR=0, SL=18);  UQ5.11 -> UQ7.9 (SR=2, SL=0)
-FXP_DEFINE_GET_LINE_LENGTH(raw, uq9_23_t, q11_5_t,  0, 18)
-FXP_DEFINE_GET_LINE_LENGTH(l2g, uq7_9_t,  uq5_11_t, 2,  0)
-
-// Kurtosis: Q11.5 signed input -> Q34.30
-FXP_DEFINE_GET_KURTOSIS_RAW()
-
-// L2 norm: 3 float axes -> one FxP combined-signal sample
-FXP_DEFINE_L2_NORM_ACCEL()  // -> fxp_l2_norm_accel()  UQ10.6
-FXP_DEFINE_L2_NORM_GYRO()   // -> fxp_l2_norm_gyro()   UQ5.11
-
-#endif // FXP_MODE

@@ -5,10 +5,6 @@
 #include <math.h>
 #include <range_analysis.h>
 
-#ifdef FXP_MODE
-#include <fxp.h>
-#endif
-
 
 
 /**
@@ -273,17 +269,3 @@ int16_t azc_computation(float *sig, int16_t len, float epsilon){
 
     return azc;
 }
-
-
-// =============================================================================
-// Fixed-point kernel instantiations (azc.c owns: azc_computation)
-// =============================================================================
-#ifdef FXP_MODE
-
-// RAW (Q11.5), L2_A (UQ10.6), L2_G (UQ5.11) — each gets a named entry point.
-// Internal interp/max_vdist/polygonal_approx are shared static functions in fxp.h.
-FXP_DEFINE_AZC_COMPUTATION(raw, q11_5_t,  fxp_azc_eps_raw)
-FXP_DEFINE_AZC_COMPUTATION(l2a, uq10_6_t, fxp_azc_eps_l2a)
-FXP_DEFINE_AZC_COMPUTATION(l2g, uq5_11_t, fxp_azc_eps_l2g)
-
-#endif // FXP_MODE

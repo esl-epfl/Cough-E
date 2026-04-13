@@ -4,44 +4,32 @@
 
 CC      = gcc
 ROOT    = ..
-SRCS    = $(wildcard $(ROOT)/Src/*.c) $(wildcard $(ROOT)/kiss_fftr/*.c)
+SRCS    = $(wildcard $(ROOT)/Src/*.c) $(wildcard $(ROOT)/kiss_fftr/*.c) $(wildcard $(ROOT)/FxP/imu/*.c)
 INC     = -I$(ROOT)/Inc -I$(ROOT)/FxP -I$(ROOT) -I$(ROOT)/kiss_fftr
 CFLAGS  = -Wall -Wextra -Wno-unused-function -std=c11 -g -DFXP_MODE
 LIBS    = -lm
+PYTHON  = python3
+.DEFAULT_GOAL = all
 
-TARGET          = fxp_test_imu
-TARGET_KFFT     = kissfft_fxp_verify
-TARGET_IMPULSE  = kissfft_fxp_impulse
+QFMT_MANIFEST = $(ROOT)/FxP/core/qformats.yaml
+QFMT_GENERATOR = $(ROOT)/FxP/tools/generate_qformats.py
+QFMT_HEADER = $(ROOT)/FxP/core/fxp_qformats.h
 
-all: $(TARGET)
+TARGET_IMU      = fxp_model_regression
 
-$(TARGET): fxp_test_imu.c $(SRCS)
-	$(CC) $(CFLAGS) -o $@ $^ $(INC) $(LIBS)
+$(QFMT_HEADER): $(QFMT_MANIFEST) $(QFMT_GENERATOR)
+	$(PYTHON) $(QFMT_GENERATOR) $(QFMT_MANIFEST) $(QFMT_HEADER)
 
-# KissFFT fixed-point readiness verification.
-# Compiled without -DFXP_MODE: this is a pure float build that checks
-# (a) kiss_fftr_alloc succeeds for each Cough-E FFT size,
-# (b) the output dynamic range matches the Q-formats in OVERLEAF.md, and
-# (c) Q2.14 input quantisation error propagates within the expected bound.
-# Does NOT use -DFIXED_POINT (incompatible with this KissFFT fork — see harness).
-$(TARGET_KFFT): kissfft_fxp_verify.c $(SRCS)
-	$(CC) -Wall -Wextra -Wno-unused-function -std=c11 -g \
-	    -o $@ $^ $(INC) $(LIBS)
+all: $(QFMT_HEADER) $(TARGET_IMU)
+
+$(TARGET_IMU): fxp_model_regression.c $(SRCS) $(QFMT_HEADER)
+	$(CC) $(CFLAGS) -o $@ fxp_model_regression.c $(SRCS) $(INC) $(LIBS)
 
 run: all
-	./$(TARGET)
+	./$(TARGET_IMU)
 
-run_kfft: $(TARGET_KFFT)
-	./$(TARGET_KFFT)
-
-# Impulse test: verifies FIXED_POINT=16 integer butterfly produces flat spectrum
-# for a unit impulse, with magnitude error within Q2.14 quantisation tolerance.
-$(TARGET_IMPULSE): kissfft_fxp_impulse.c $(ROOT)/kiss_fftr/kiss_fft.c $(ROOT)/kiss_fftr/kiss_fftr.c
-	$(CC) -Wall -Wextra -Wno-unused-function -std=c11 -g -DFIXED_POINT=16 \
-	    -o $@ $^ $(INC) $(LIBS)
-
-run_impulse: $(TARGET_IMPULSE)
-	./$(TARGET_IMPULSE)
+run_regression: $(TARGET_IMU)
+	./$(TARGET_IMU)
 
 clean:
-	rm -f $(TARGET) $(TARGET_KFFT) $(TARGET_IMPULSE)
+	rm -f $(TARGET_IMU)

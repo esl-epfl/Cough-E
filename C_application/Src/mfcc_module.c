@@ -50,10 +50,6 @@ void stft(const float *x, int16_t len, int16_t n_frames, float *res){
     reflect_padding(x, len, PAD_LEN, padded);
 
     float *column = (float*)malloc(N_FFT * sizeof(float));
-#ifdef FIXED_POINT
-    /* Q2.14 input buffer required by FIXED_POINT=16 KissFFT. */
-    kiss_fft_scalar *col_q14 = (kiss_fft_scalar*)malloc(N_FFT * sizeof(kiss_fft_scalar));
-#endif
 
     // initialize RFFT structures
     kiss_fftr_cfg cfg = kiss_fftr_alloc(N_FFT, 0, 0, 0);
@@ -103,7 +99,6 @@ void stft(const float *x, int16_t len, int16_t n_frames, float *res){
         for(int16_t j=0; j<FFT_RES_LEN; j++){
             res[(i * FFT_RES_LEN) + j] = column[j];
         }
-#endif
     }
 
     free(cfg);
@@ -111,9 +106,6 @@ void stft(const float *x, int16_t len, int16_t n_frames, float *res){
     free(padded);
     free(column);
     free(fft_res);
-#ifdef FIXED_POINT
-    free(col_q14);
-#endif
 }
 
 

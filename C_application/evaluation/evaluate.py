@@ -490,8 +490,9 @@ def cmd_run(args):
     os.makedirs(output_dir, exist_ok=True)
 
     if getattr(args, "fxp", False):
-        evaluate_recording._extra_flags = "-DFXP_MODE -DFIXED_POINT=16"
-        print("FxP mode enabled (-DFXP_MODE -DFIXED_POINT=16)")
+        flags = "-DFXP_MODE"
+        evaluate_recording._extra_flags = flags
+        print(f"FxP mode enabled ({flags})")
     else:
         evaluate_recording._extra_flags = ""
 
@@ -547,7 +548,8 @@ def cmd_compare(args):
     float_agg = compute_aggregate_metrics(float_results)
 
     print("\n=== FxP evaluation ===")
-    evaluate_recording._extra_flags = "-DFXP_MODE -DFIXED_POINT=16"
+    fxp_flags = "-DFXP_MODE"
+    evaluate_recording._extra_flags = fxp_flags
     fxp_results = evaluate_subjects(dataset_path, subjects=args.subjects,
                                     sounds=args.sounds, noises=args.noises)
     fxp_agg = compute_aggregate_metrics(fxp_results)
@@ -623,7 +625,7 @@ def main():
                         help="Output directory (default: evaluation/)")
         if fxp_flag:
             p.add_argument("--fxp", action="store_true", default=False,
-                           help="Compile with -DFXP_MODE (fixed-point kernels)")
+                           help="Compile with -DFXP_MODE (IMU fixed-point kernels)")
 
     p_transform = subparsers.add_parser("transform", help="Generate C headers from dataset")
     add_common_args(p_transform)

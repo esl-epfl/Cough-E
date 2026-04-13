@@ -11,10 +11,6 @@
 #include <range_analysis.h>
 #include <imu_features.h>
 
-#ifdef FXP_MODE
-#include <fxp.h>
-#endif
-
 
 // Here I put all the functions to compute time domain features
 
@@ -149,22 +145,3 @@ void eepd(const float *sig, int16_t len, int16_t fs, const int8_t *select, int16
     free(interm);
     free(filtered);
 }
-
-
-// =============================================================================
-// Fixed-point kernel instantiations (time_domain_feat.c owns: get_rms, get_max)
-// =============================================================================
-#ifdef FXP_MODE
-
-// RMS: SQ_SR = right-shift per squared sample; MEAN_SHIFT = net shift before sqrt
-//   Q11.5  -> UQ16.16 : SQ_SR=0,  MEAN_SHIFT=+22 (<<22), sqrt64
-//   UQ10.6 -> UQ13.3  : SQ_SR=5,  MEAN_SHIFT=-1  (>>1),  sqrt32
-//   UQ5.11 -> UQ7.9   : SQ_SR=3,  MEAN_SHIFT=-1  (>>1),  sqrt32
-FXP_DEFINE_GET_RMS(raw, q11_5_t,  uq16_16_t, uint64_t,  0,  22, fxp_sqrt64)
-FXP_DEFINE_GET_RMS(l2a, uq10_6_t, uq13_3_t,  uint32_t,  5,  -1, fxp_sqrt32)
-FXP_DEFINE_GET_RMS(l2g, uq5_11_t, uq7_9_t,   uint32_t,  3,  -1, fxp_sqrt32)
-
-// get_max: UQ5.11 input (used for crest factor computation)
-FXP_DEFINE_GET_MAX_L2G()
-
-#endif // FXP_MODE
