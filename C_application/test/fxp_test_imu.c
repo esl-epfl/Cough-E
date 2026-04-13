@@ -78,8 +78,8 @@ int main(void)
     for(int i = 0; i < WIN_LEN; i++){
         for(int ax = 0; ax < 6; ax++)
             raw_fxp[ax][i] = FXP_IMU_RAW_FROM_FLOAT(raw[ax][i]);
-        l2a_fxp[i] = fxp_L2_norm_accel(raw[0][i], raw[1][i], raw[2][i]);
-        l2g_fxp[i] = fxp_L2_norm_gyro(raw[3][i], raw[4][i], raw[5][i]);
+        l2a_fxp[i] = fxp_l2_norm_accel(raw[0][i], raw[1][i], raw[2][i]);
+        l2g_fxp[i] = fxp_l2_norm_gyro(raw[3][i], raw[4][i], raw[5][i]);
     }
 
     printf("\n%s=== FxP IMU Kernel Test  (window %d, len=%d) ===%s\n\n",
@@ -100,7 +100,7 @@ int main(void)
     printf("\n%sRMS:%s\n", COL_HEAD, COL_RESET);
     // Use accel_z (index 2) as representative RAW axis (large signal ~105)
     float rms_raw_f = get_rms(raw[2], WIN_LEN);
-    uq11_16_t rms_raw_x = fxp_get_rms_raw(raw_fxp[2], WIN_LEN);
+    uq16_16_t rms_raw_x = fxp_get_rms_raw(raw_fxp[2], WIN_LEN);
     print_result("get_rms", "RAW(az)", rms_raw_f, FXP_TO_FLOAT(rms_raw_x, 16));
 
     float rms_l2a_f = get_rms(l2a_f, WIN_LEN);
@@ -117,11 +117,11 @@ int main(void)
     printf("\n%sLine Length:%s\n", COL_HEAD, COL_RESET);
     // Use accel_x (index 0) as RAW — has largest variation
     float ll_raw_f = get_line_length(raw[0], WIN_LEN);
-    uq3_23_t ll_raw_x = fxp_get_line_length_raw(raw_fxp[0], WIN_LEN);
+    uq9_23_t ll_raw_x = fxp_get_line_length_raw(raw_fxp[0], WIN_LEN);
     print_result("get_line_length", "RAW(ax)", ll_raw_f, FXP_TO_FLOAT(ll_raw_x, 23));
 
     float ll_l2g_f = get_line_length(l2g_f, WIN_LEN);
-    uq2_9_t ll_l2g_x = fxp_get_line_length_l2g(l2g_fxp, WIN_LEN);
+    uq7_9_t ll_l2g_x = fxp_get_line_length_l2g(l2g_fxp, WIN_LEN);
     print_result("get_line_length", "L2_G", ll_l2g_f, FXP_TO_FLOAT(ll_l2g_x, 9));
 
     // =========================================================================
@@ -129,7 +129,7 @@ int main(void)
     // =========================================================================
     printf("\n%sKurtosis:%s\n", COL_HEAD, COL_RESET);
     float kurt_f = get_kurtosis(raw[0], WIN_LEN);
-    q6_30_t kurt_x = fxp_get_kurtosis_raw(raw_fxp[0], WIN_LEN);
+    q34_30_t kurt_x = fxp_get_kurtosis_raw(raw_fxp[0], WIN_LEN);
     print_result("get_kurtosis", "RAW(ax)", kurt_f, FXP_TO_FLOAT(kurt_x, 30));
 
     // Also test with accel_z (near-constant ~105 -> kurtosis near -3 Fisher)

@@ -6,7 +6,7 @@ BUILD_DIR 	= 	build
 SRC_DIRS 	= 	Src kiss_fftr
 SRC 		= 	$(foreach c, $(SRC_DIRS), $(wildcard $c/*.c))
 
-INC_DIRS 	= 	Inc ./ kiss_fftr range_analysis
+INC_DIRS 	= 	Inc FxP ./ kiss_fftr
 INC 		= 	$(foreach d, $(INC_DIRS), -I$d)
 
 MATH 		= 	-lm

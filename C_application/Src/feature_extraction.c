@@ -532,7 +532,7 @@ void imu_features(const int8_t *features_selector, const float sig[][Num_IMU_sig
     // L2_A: compute FxP L2 norm sample-by-sample (3 accel axes -> UQ10.6)
     uq10_6_t *combo_l2a = (uq10_6_t*)malloc(len * sizeof(uq10_6_t));
     for(int16_t i=0; i<len; i++){
-        combo_l2a[i] = fxp_L2_norm_accel(sig[i][0], sig[i][1], sig[i][2]);
+        combo_l2a[i] = fxp_l2_norm_accel(sig[i][0], sig[i][1], sig[i][2]);
     }
     imu_sig_l2a_t s_l2a = { .data = combo_l2a, .len = len };
     IMU_SIGNAL_FEATURES(&features_selector[ACCEL_COMBO], s_l2a, &feats[ACCEL_COMBO]);
@@ -541,7 +541,7 @@ void imu_features(const int8_t *features_selector, const float sig[][Num_IMU_sig
     // L2_G: compute FxP L2 norm sample-by-sample (3 gyro axes -> UQ5.11)
     uq5_11_t *combo_l2g = (uq5_11_t*)malloc(len * sizeof(uq5_11_t));
     for(int16_t i=0; i<len; i++){
-        combo_l2g[i] = fxp_L2_norm_gyro(sig[i][3], sig[i][4], sig[i][5]);
+        combo_l2g[i] = fxp_l2_norm_gyro(sig[i][3], sig[i][4], sig[i][5]);
     }
     imu_sig_l2g_t s_l2g = { .data = combo_l2g, .len = len };
     IMU_SIGNAL_FEATURES(&features_selector[GYRO_COMBO], s_l2g, &feats[GYRO_COMBO]);

@@ -5,7 +5,7 @@
 CC      = gcc
 ROOT    = ..
 SRCS    = $(wildcard $(ROOT)/Src/*.c) $(wildcard $(ROOT)/kiss_fftr/*.c)
-INC     = -I$(ROOT)/Inc -I$(ROOT) -I$(ROOT)/kiss_fftr
+INC     = -I$(ROOT)/Inc -I$(ROOT)/FxP -I$(ROOT) -I$(ROOT)/kiss_fftr
 CFLAGS  = -Wall -Wextra -Wno-unused-function -std=c11 -g -DFXP_MODE
 LIBS    = -lm
 
