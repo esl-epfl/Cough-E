@@ -13,6 +13,7 @@
 #include <audio_features.h>
 
 #include <kiss_fftr.h>
+#include <range_analysis.h>
 
 
 /*
@@ -25,21 +26,32 @@ void _rfft(const float *sig, int16_t len, float *real, float *imag);
 
 void compute_rfft(const float *sig, int16_t len, int16_t fs, float *mags, float *freqs, float *sum_mags){
 
+    RA_LOG_ARRAY("AUDIO_FFT", "compute_rfft", "sig_input", sig, len);
+
     float *re = (float*)malloc(len * sizeof(float));
     float *im = (float*)malloc(len * sizeof(float));
 
     _rfft(sig, len, re, im);
 
+    int16_t fft_size = (len/2)+1;
+    RA_LOG_ARRAY("AUDIO_FFT", "compute_rfft", "re", re, fft_size);
+    RA_LOG_ARRAY("AUDIO_FFT", "compute_rfft", "im", im, fft_size);
+
     // Compute the magnitude of each FFT output
-    for(int16_t i=0; i<(len/2)+1 ; i++){
+    for(int16_t i=0; i<fft_size; i++){
         mags[i] = sqrtf((re[i] * re[i]) + (im[i] * im[i]));
         *sum_mags += mags[i];
     }
 
+    RA_LOG_ARRAY("AUDIO_FFT", "compute_rfft", "magnitudes", mags, fft_size);
+
     // Get the frequency bins (only the positive one becaus it's a real FFT)
-    for(int16_t i=0; i<(len/2)+1; i++){
+    for(int16_t i=0; i<fft_size; i++){
         freqs[i] = (float)(i * fs) / len;
     }
+
+    RA_LOG_ARRAY("AUDIO_FFT", "compute_rfft", "frequencies", freqs, fft_size);
+    RA_LOG_SCALAR("AUDIO_FFT", "compute_rfft", "sum_mags", *sum_mags);
 
     free(re);
     free(im);
@@ -67,7 +79,7 @@ void _rfft(const float *sig, int16_t len, float *real, float *imag){
 
 void compute_periodogram(const float *sig, int16_t len, int16_t fs, float *psd, float *freqs){
 
-    float freq_step = ((float)fs / 2) / ( (float)NPERSEG / 2);  // the frequency step for eah bin 
+    float freq_step = ((float)fs / 2) / ( (float)NPERSEG / 2);  // the frequency step for eah bin
     float *win = (float*)malloc(NPERSEG * sizeof(float));   // to keep the data of the current processed window
     float *cumul_sums = (float*)malloc(NPERSEG * sizeof(float));  // To store the cumulative sum of the FFT of each frequency bin
     memset(cumul_sums, 0, NPERSEG * sizeof(float));
@@ -88,12 +100,14 @@ void compute_periodogram(const float *sig, int16_t len, int16_t fs, float *psd, 
         sum += hann_window[i] * hann_window[i];
     }
 
-    scale = 1 / (fs * sum); 
+    scale = 1 / (fs * sum);
+    RA_LOG_SCALAR("AUDIO_PSD", "periodogram", "scale", scale);
 
     // start and end indexes of the current processed window
     int16_t start = 0;
     int16_t end = start + NPERSEG;
 
+    int16_t psd_size = (NPERSEG/2)+1;
     int16_t steps = (len - NOVERLAP) / (NPERSEG - NOVERLAP);    // Number or windows that will be processed
     for(int16_t i=0; i<steps; i++){
 
@@ -106,14 +120,17 @@ void compute_periodogram(const float *sig, int16_t len, int16_t fs, float *psd, 
         // Apply the window function
         for(int16_t i=0; i<NPERSEG; i++){
             win[i] *= hann_window[i];
-        }  
+        }
 
+        RA_LOG_ARRAY("AUDIO_PSD", "periodogram", "windowed", win, NPERSEG);
 
         _rfft(win, NPERSEG, re, im);    // Actual Real FFT computation
 
-        for(int16_t i=0; i<(NPERSEG/2)+1; i++){
-            mags_squared[i] = (re[i] * re[i]) + (im[i] * im[i]);
-            mags_squared[i] *= scale;
+        RA_LOG_ARRAY("AUDIO_PSD", "periodogram", "re", re, psd_size);
+        RA_LOG_ARRAY("AUDIO_PSD", "periodogram", "im", im, psd_size);
+
+        for(int16_t i=0; i<psd_size; i++){
+            mags_squared[i] = ((re[i] * re[i]) + (im[i] * im[i])) * scale;
 
             if(i != 0 && i != (NPERSEG/2)){
                 mags_squared[i] *= 2;       // Multiply by 2, apart from DC frequency (first element) and last element
@@ -121,15 +138,22 @@ void compute_periodogram(const float *sig, int16_t len, int16_t fs, float *psd, 
             cumul_sums[i] += mags_squared[i];   // Update the cumulative sum (element-wise across FFT result of different windows)
         }
 
+        RA_LOG_ARRAY("AUDIO_PSD", "periodogram", "mags_squared", mags_squared, psd_size);
+
         start = end - NOVERLAP;
         end = start + NPERSEG;
     }
 
+    RA_LOG_ARRAY("AUDIO_PSD", "periodogram", "cumul_sums", cumul_sums, psd_size);
+
     // Compute the result psd as the avarage of each FFT result and compute the frequencies
-    for(int16_t i=0; i<(NPERSEG/2)+1; i++){
+    for(int16_t i=0; i<psd_size; i++){
         psd[i] = cumul_sums[i] / steps;
         freqs[i] = freq_step * i;
     }
+
+    RA_LOG_ARRAY("AUDIO_PSD", "periodogram", "psd", psd, psd_size);
+    RA_LOG_ARRAY("AUDIO_PSD", "periodogram", "freqs", freqs, psd_size);
 
     free(win);
     free(cumul_sums);
@@ -145,11 +169,16 @@ float compute_spec_decrease(float* mags, float* freqs, int16_t len, float sum_ma
     float sum = 0.0;
     float dc_mag = mags[0];
 
+    RA_LOG_SCALAR("AUDIO_FFT", "spec_decrease", "dc_mag", dc_mag);
+
     for(int16_t i=0; i<len; i++){
         sum += (mags[i] - dc_mag) / (i + 1);
     }
 
-    return sum / sum_mags;
+    RA_LOG_SCALAR("AUDIO_FFT", "spec_decrease", "sum", sum);
+    float result = sum / sum_mags;
+    RA_LOG_SCALAR("AUDIO_FFT", "spec_decrease", "result", result);
+    return result;
 }
 
 
@@ -160,16 +189,23 @@ float compute_spectral_slope(float *mags, float *freqs, int16_t len, float sum_m
 
     mean_freq = vect_mean(freqs, len);
 
+    RA_LOG_SCALAR("AUDIO_FFT", "spec_slope", "mean_mag", mean_mag);
+    RA_LOG_SCALAR("AUDIO_FFT", "spec_slope", "mean_freq", mean_freq);
+
     // Numerator and denominator for the final slope computation
     float num = 0.0;
     float den = 0.0;
 
     for(int16_t i=0; i<len; i++){
         num += (freqs[i] - mean_freq) * (mags[i] - mean_mag);
-        den += (freqs[i] - mean_freq) * (freqs[i] - mean_freq); 
+        den += (freqs[i] - mean_freq) * (freqs[i] - mean_freq);
     }
 
-    return num / den;
+    RA_LOG_SCALAR("AUDIO_FFT", "spec_slope", "num", num);
+    RA_LOG_SCALAR("AUDIO_FFT", "spec_slope", "den", den);
+    float result = num / den;
+    RA_LOG_SCALAR("AUDIO_FFT", "spec_slope", "result", result);
+    return result;
 }
 
 
@@ -180,13 +216,19 @@ float compute_rolloff(float *mags, float *freqs, int16_t len, float sum_mags){
     float sum = 0.0;
     float rolloff = -1.0;   // Error value
 
+    RA_LOG_SCALAR("AUDIO_FFT", "rolloff", "rolloff_energy", rolloff_energy);
+
     for(int16_t i=0; i<len; i++){
         sum += mags[i];
+        RA_LOG_SCALAR("AUDIO_FFT", "rolloff", "sum", sum);
 
-        if(sum >= rolloff_energy)
+        if(sum >= rolloff_energy){
+            RA_LOG_SCALAR("AUDIO_FFT", "rolloff", "result", freqs[i]);
             return freqs[i];
+        }
     }
 
+    RA_LOG_SCALAR("AUDIO_FFT", "rolloff", "result", rolloff);
     return rolloff;
 }
 
@@ -200,7 +242,10 @@ float compute_centroid(float *mags, float *freqs, int16_t len, float sum_mags){
         sum += freqs[i] * mags[i];
     }
 
-    return sum / sum_mags;
+    RA_LOG_SCALAR("AUDIO_FFT", "centroid", "sum", sum);
+    float result = sum / sum_mags;
+    RA_LOG_SCALAR("AUDIO_FFT", "centroid", "result", result);
+    return result;
 }
 
 
@@ -212,7 +257,10 @@ float compute_spread(float *mags, float *freqs, int16_t len, float sum_mags, flo
         sum += (freqs[i] - centroid) * (freqs[i] - centroid) * mags[i];
     }
 
-    return sqrtf(sum / sum_mags);
+    RA_LOG_SCALAR("AUDIO_FFT", "spread", "sum", sum);
+    float result = sqrtf(sum / sum_mags);
+    RA_LOG_SCALAR("AUDIO_FFT", "spread", "result", result);
+    return result;
 }
 
 
@@ -220,6 +268,8 @@ float compute_spread(float *mags, float *freqs, int16_t len, float sum_mags, flo
 float compute_kurt(float *mags, float *freqs, int16_t len, float sum_mags, float centroid, float spread){
 
     float spread_4 = spread * spread * spread * spread; // spread^4
+    RA_LOG_SCALAR("AUDIO_FFT", "spec_kurt", "spread_4", spread_4);
+
     float sum = 0.0;
 
     for(int16_t i=0; i<len; i++){
@@ -227,7 +277,10 @@ float compute_kurt(float *mags, float *freqs, int16_t len, float sum_mags, float
         sum += tmp * tmp * mags[i];
     }
 
-    return sum / (spread_4 * sum_mags);
+    RA_LOG_SCALAR("AUDIO_FFT", "spec_kurt", "sum", sum);
+    float result = sum / (spread_4 * sum_mags);
+    RA_LOG_SCALAR("AUDIO_FFT", "spec_kurt", "result", result);
+    return result;
 }
 
 
@@ -235,6 +288,8 @@ float compute_kurt(float *mags, float *freqs, int16_t len, float sum_mags, float
 float compute_skew(float *mags, float *freqs, int16_t len, float sum_mags, float centroid, float spread){
 
     float spread_3 = spread * spread * spread;
+    RA_LOG_SCALAR("AUDIO_FFT", "spec_skew", "spread_3", spread_3);
+
     float sum = 0.0;
 
     for(int16_t i=0; i<len; i++){
@@ -242,58 +297,88 @@ float compute_skew(float *mags, float *freqs, int16_t len, float sum_mags, float
         sum += tmp * (freqs[i] - centroid) * mags[i];
     }
 
-    return sum / (spread_3 * sum_mags);
+    RA_LOG_SCALAR("AUDIO_FFT", "spec_skew", "sum", sum);
+    float result = sum / (spread_3 * sum_mags);
+    RA_LOG_SCALAR("AUDIO_FFT", "spec_skew", "result", result);
+    return result;
 }
 
 
 float compute_flatness(float *x, int16_t len){
 
+    RA_LOG_ARRAY("AUDIO_PSD", "flatness", "input", x, len);
+
     float gmean = 0.0;  // geometric
     float amean = 0.0;  // arithmetic
 
     float sum_logs = 0.0;
+    float log_val = 0.0;
     for(int16_t i=0; i<len; i++){
-        sum_logs += logf(x[i]);
+        log_val = logf(x[i]);
+        RA_LOG_SCALAR("AUDIO_PSD", "flatness", "log_val", log_val);
+        sum_logs += log_val;
     }
+    RA_LOG_SCALAR("AUDIO_PSD", "flatness", "sum_logs_raw", sum_logs);
     sum_logs = sum_logs / len;
 
     gmean = exp(sum_logs);
     amean = vect_mean(x, len);
-    return gmean / amean;
+
+    RA_LOG_SCALAR("AUDIO_PSD", "flatness", "sum_logs", sum_logs);
+    RA_LOG_SCALAR("AUDIO_PSD", "flatness", "gmean", gmean);
+    RA_LOG_SCALAR("AUDIO_PSD", "flatness", "amean", amean);
+    float result = gmean / amean;
+    RA_LOG_SCALAR("AUDIO_PSD", "flatness", "result", result);
+    return result;
 }
 
 
 float compute_std(float *x, int16_t len){
 
-    return vect_std(x, len);
+    RA_LOG_ARRAY("AUDIO_PSD", "spec_std", "input", x, len);
+    float result = vect_std(x, len);
+    RA_LOG_SCALAR("AUDIO_PSD", "spec_std", "result", result);
+    return result;
 
 }
 
 float compute_spectral_entropy(float *x, int16_t len){
+
+    RA_LOG_ARRAY("AUDIO_PSD", "spec_entropy", "input", x, len);
 
     float *tmp = (float*)malloc(len * sizeof(float));
     float sum = vect_sum(x, len);
     vect_div_const(x, len, sum, tmp);
     entropy_calc(tmp, len, 2);
 
+    float result = vect_sum(tmp, len);
+    RA_LOG_SCALAR("AUDIO_PSD", "spec_entropy", "sum", sum);
+    RA_LOG_SCALAR("AUDIO_PSD", "spec_entropy", "result", result);
+
     free(tmp);
 
-    return vect_sum(tmp, len);
+    return result;
 }
 
 
 
 float get_domiant_freq(float *psd, float *freqs, int16_t len){
-    
-    return freqs[vect_max_index(psd, len)];
+
+    float result = freqs[vect_max_index(psd, len)];
+    RA_LOG_SCALAR("AUDIO_PSD", "dominant_freq", "result", result);
+    return result;
 }
 
 
 
 void normalized_bandpowers(float *psd, float *freqs, int16_t len, const int8_t *psd_selector, float *band_powers){
 
+    RA_LOG_ARRAY("AUDIO_PSD", "bandpowers", "psd_input", psd, len);
+
     float dx_freq = freqs[1] - freqs[0];
     float total_power = simpson(psd, len, dx_freq);
+
+    RA_LOG_SCALAR("AUDIO_PSD", "bandpowers", "total_power", total_power);
 
     int16_t start_ind_freq = 0; // index of the first frequency inside the band
     int16_t n_bins = 0;         // number of frequency bins inside the band
@@ -318,7 +403,9 @@ void normalized_bandpowers(float *psd, float *freqs, int16_t len, const int8_t *
             }
 
             band_power = simpson(&psd[start_ind_freq], n_bins, dx_freq);
+            RA_LOG_SCALAR("AUDIO_PSD", "bandpowers", "band_power", band_power);
             band_powers[i] = band_power / total_power;
+            RA_LOG_SCALAR("AUDIO_PSD", "bandpowers", "result", band_powers[i]);
         }
     }
 }
@@ -394,6 +481,12 @@ void get_mel_spectrogram_features(const float *x, int16_t len, uint8_t *idx_need
         std_mel_spectr[i] = vect_std(&mel_dB[i*n_frames], n_frames);
         max_mel_spectr[i] = vect_max_value(&mel_dB[i*n_frames], n_frames);
     }
+
+    RA_LOG_ARRAY("AUDIO_MEL", "mel_features", "mel_dB", mel_dB, n_mels_needed * n_frames);
+    RA_LOG_ARRAY("AUDIO_MEL", "mel_features", "mean", mean_mel_spectr, n_mels_needed);
+    RA_LOG_ARRAY("AUDIO_MEL", "mel_features", "std", std_mel_spectr, n_mels_needed);
+    RA_LOG_ARRAY("AUDIO_MEL", "mel_features", "max", max_mel_spectr, n_mels_needed);
+    RA_LOG_ARRAY("AUDIO_MEL", "mel_features", "entropy", entropy_mel_spectr, n_mels_needed);
 
     free(spectrogram);
     free(mel_dB);

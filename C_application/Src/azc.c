@@ -3,6 +3,7 @@
 #include <helpers.h>
 #include <azc.h>
 #include <math.h>
+#include <range_analysis.h>
 
 
 
@@ -114,9 +115,10 @@ float _max_vdist(float *sig, int16_t first, int16_t last, int16_t *idx){
 
     // Get the maximum distance
     *idx = vect_max_index(dist, len);
-    
+
     // Have to take the result before adjusting the index
     float result  = dist[*idx];
+    RA_IMU_LOG_SCALAR("azc", "max_dist", result);
 
     // Adjust the index to have the global one with respect to sig
     *idx += first;
@@ -227,7 +229,7 @@ int16_t azc_computation(float *sig, int16_t len, float epsilon){
 
     // Compute the approximation
     int16_t *approx_idxs = polygonal_approx(sig, len, epsilon, &approx_len);
-    
+
     // Sort the resulting indexes in ascending way
     qsort(approx_idxs, approx_len, sizeof(int16_t), _qsort_cmp);
 
@@ -238,8 +240,16 @@ int16_t azc_computation(float *sig, int16_t len, float epsilon){
         approx_sig[i] = sig[approx_idxs[i]];
         timestamps[i] = approx_idxs[i];
     }
-    
+
+    if(approx_len > 0){
+        RA_IMU_LOG_ARRAY("azc", "approx_sig", approx_sig, approx_len);
+    }
+
     float *diff = _discrete_diff(approx_sig, timestamps, approx_len);
+
+    if(approx_len > 1){
+        RA_IMU_LOG_ARRAY("azc", "diff", diff, approx_len - 1);
+    }
 
     int16_t azc = 0;
 

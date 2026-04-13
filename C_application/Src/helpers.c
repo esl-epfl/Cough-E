@@ -3,13 +3,14 @@
 #include <math.h>
 
 #include <helpers.h>
+#include <range_analysis.h>
 
 // Minimum float available (supposing 32-bit float)
 #define MIN_FLOAT 1.17549e-038
 
 // Costant used in the kurtosis computation using the
 // Fisher definition
-#define KURT_FISHER_CONST   3  
+#define KURT_FISHER_CONST   3
 
 
 // Internal functions to support some computations
@@ -68,8 +69,8 @@ void order_by_idxs(void *arr_in, uint16_t len, uint16_t *idxs, type_sort_t type)
     if(type == FLOAT_SORT){
 
         float *arr = (float*)arr_in;
-        float *tmp = (float*)malloc(len * sizeof(float));  
-        
+        float *tmp = (float*)malloc(len * sizeof(float));
+
         for(uint16_t i=0; i<len; i++){
             // printf(">  %d\n", i);
             tmp[i] = arr[idxs[i]];
@@ -77,14 +78,14 @@ void order_by_idxs(void *arr_in, uint16_t len, uint16_t *idxs, type_sort_t type)
 
         // Copies the idex-ordered tmp array back in place into arr
         vect_copy(tmp, 0, len, arr);
-        
+
         free(tmp);
 
     } else if(type == UINT16_T_SORT) {
 
         uint16_t *arr = (uint16_t*)arr_in;
         uint16_t *tmp = (uint16_t*)malloc(len * sizeof(uint16_t));
-        
+
         for(uint16_t i=0; i<len; i++){
             // printf(">  %d\n", i);
             tmp[i] = arr[idxs[i]];
@@ -92,7 +93,7 @@ void order_by_idxs(void *arr_in, uint16_t len, uint16_t *idxs, type_sort_t type)
 
         // Copies the idex-ordered tmp array back in place into arr
         vect_copy_uint16_t(tmp, 0, len, arr);
-        
+
         free(tmp);
     }
 }
@@ -134,10 +135,19 @@ float vect_std(float *x, int16_t len){
     float sum = 0.0;
 
     for(int16_t i=0; i<len; i++){
-        sum += (x[i] - mean) * (x[i] - mean);
+        float centered = x[i] - mean;
+        RA_IMU_LOG_SCALAR("vect_std", "x_minus_mean", centered);
+        float sq_dev = centered * centered;
+        RA_IMU_LOG_SCALAR("vect_std", "sq_dev", sq_dev);
+        sum += sq_dev;
     }
 
-    return sqrtf(sum / len);
+    RA_IMU_LOG_SCALAR("vect_std", "sum_sq_dev", sum);
+    float variance = sum / len;
+    RA_IMU_LOG_SCALAR("vect_std", "variance", variance);
+    float result = sqrtf(variance);
+    RA_IMU_LOG_SCALAR("vect_std", "result", result);
+    return result;
 }
 
 
@@ -154,7 +164,7 @@ void vect_copy(const float *in, int16_t start, int16_t len, float *out){
 void vect_copy_uint16_t(uint16_t *in, int16_t start, int16_t len, uint16_t *out){
     for(int16_t i=0; i<len; i++){
         out[i] = in[i + start];
-    }  
+    }
 }
 
 
@@ -214,15 +224,15 @@ void normalize_max(float *x, int16_t len, float *res){
 
 /*
     Helper function for the maximum value and relative index computation
-    It stores to max_value and max_index the maximum value and relative index 
+    It stores to max_value and max_index the maximum value and relative index
     found in the array x, respectively
 */
 
 /// @brief Helper function for the maximum value and relative index computation
-/// It stores to max_value and max_index the maximum value and relative index 
+/// It stores to max_value and max_index the maximum value and relative index
 /// found in the array x, respectively
 /// @param *x   pointer to the inpug array
-/// @param len  lenght of the array 
+/// @param len  lenght of the array
 /// @param *max_value   max value
 /// @param *max_index   index of the max value
 void _find_max(float *x, int16_t len, float *max_value, int16_t *max_index){
@@ -270,9 +280,9 @@ float simpson(float *x, int16_t len, float spacing){
 /// @param spacing  spacing
 /// @param start    start index
 /// @param end      end index
-/// @return         
+/// @return
 float _simpson_step(float *x, float spacing, int16_t start, int16_t end){
-    
+
     int n_intervals = (end - start) / 2; // number of intervals (h in the formula)
 
     float sum = 0.0;
@@ -298,7 +308,7 @@ void padding(const float *sig, int len, int padlen, float *res){
 
     // compute and append padding for the left side
     for(int i=0; i<padlen; i++){
-        left_ext[i] = sig[padlen-i]; 
+        left_ext[i] = sig[padlen-i];
         right_ext[i] = sig[len-2-i];
 
         res[i] = (2 * left_end) - left_ext[i];
@@ -355,9 +365,13 @@ float get_line_length(float *x, int16_t len){
 
     for(int16_t i=0; i<len-1; i++){
         sum += fabs(x[i+1] - x[i]);
+        RA_IMU_LOG_SCALAR("get_line_length", "diff", fabs(x[i+1] - x[i]));
     }
 
-    return sum / (len-1);
+    RA_IMU_LOG_SCALAR("get_line_length", "accum", sum);
+    float result = sum / (len-1);
+    RA_IMU_LOG_SCALAR("get_line_length", "result", result);
+    return result;
 }
 
 
@@ -368,27 +382,50 @@ float get_kurtosis(float *x, int16_t len){
     float std = vect_std(x, len);
     float mean = vect_mean(x, len);
 
+    RA_IMU_LOG_SCALAR("get_kurtosis", "mean", mean);
+    RA_IMU_LOG_SCALAR("get_kurtosis", "std", std);
+
     float sum = 0.0;
+#ifdef RANGE_ANALYSIS
+    float moment_max = 0.0;
+#endif
 
     for(int16_t i=0; i<len; i++){
         register float tmp = (x[i] - mean) * (x[i] - mean);
-        sum += tmp * tmp;
+        float x4 = tmp * tmp;
+#ifdef RANGE_ANALYSIS
+        if(x4 > moment_max)
+            moment_max = x4;
+#endif
+        sum += x4;
     }
 
-    return (sum / (len * pow(std, 4))) - KURT_FISHER_CONST;
+#ifdef RANGE_ANALYSIS
+    RA_IMU_LOG_SCALAR("get_kurtosis", "moment_max", moment_max);
+#endif
+    RA_IMU_LOG_SCALAR("get_kurtosis", "sum_x4", sum);
 
+    float std4 = pow(std, 4);
+    RA_IMU_LOG_SCALAR("get_kurtosis", "std4", std4);
+
+    float result = (sum / (len * std4)) - KURT_FISHER_CONST;
+    RA_IMU_LOG_SCALAR("get_kurtosis", "result", result);
+    return result;
 }
 
 
 float L2_norm(const float *x, int16_t len){
-    
+
     float sum = 0.0;
 
     for(int16_t i=0; i<len; i++){
         sum += x[i] * x[i];
     }
 
-    return sqrtf(sum);
+    RA_IMU_LOG_SCALAR("L2_norm", "sum_sq", sum);
+    float result = sqrtf(sum);
+    RA_IMU_LOG_SCALAR("L2_norm", "result", result);
+    return result;
 }
 
 

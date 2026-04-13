@@ -3,6 +3,7 @@
 #include <math.h>
 
 #include <audio_model.h>
+#include <range_analysis.h>
 
 /// @brief Computes the sigmoid value of a given score
 /// @param score    :   the score for which to compute the sigmoid
@@ -18,6 +19,8 @@ float _audio_sigmoid(float score){
 
 
 float audio_predict(float *feats){
+
+    RA_LOG_ARRAY("CLASSIFY", "audio_predict", "feats_input", feats, TOT_FEATURES_AUDIO_MODEL_AUDIO);
 
     float score = 0.0;
 
@@ -46,7 +49,10 @@ float audio_predict(float *feats){
         }
     }
 
+    RA_LOG_SCALAR("CLASSIFY", "audio_predict", "score", score);
+
     float res = _audio_sigmoid(score);
-    
+    RA_LOG_SCALAR("CLASSIFY", "_audio_sigmoid", "result", res);
+
     return res;
 }

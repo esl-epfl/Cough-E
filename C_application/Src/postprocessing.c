@@ -2,6 +2,7 @@
 #include <stdlib.h>
 
 #include <postprocessing.h>
+#include <range_analysis.h>
 
 /**
  * Checks if a specific element is contained in the given array.
@@ -39,6 +40,8 @@ uint8_t _contains(uint16_t *arr, uint16_t len, uint16_t elem){
 */
 float* _downsample(const float* sig, int16_t len, int16_t fs, int16_t *new_len){
 
+    RA_LOG_ARRAY("POSTPROC", "_downsample", "sig_input", sig, len);
+
     // Compute the new length of the downsamples signal
     int8_t scale_factor = fs / FS_DOWNSAMPLE;
     *new_len = len / scale_factor;
@@ -53,20 +56,26 @@ float* _downsample(const float* sig, int16_t len, int16_t fs, int16_t *new_len){
     }
 
     mean = mean / *new_len;
+    RA_LOG_SCALAR("POSTPROC", "_downsample", "mean", mean);
 
     // Subtract the mean
     sub_constant(res, *new_len, mean, res);
+    RA_LOG_ARRAY("POSTPROC", "_downsample", "zero_mean", res, *new_len);
 
     // Divide by the maximum absolute value
     float max_abs = vect_max_abs_value(res, *new_len);
+    RA_LOG_SCALAR("POSTPROC", "_downsample", "max_abs", max_abs);
     vect_div_const(res, *new_len, max_abs, res);
+    RA_LOG_ARRAY("POSTPROC", "_downsample", "result", res, *new_len);
 
     return res;
 }
 
 
 void _get_cough_peaks(const float* seg, int16_t len, int16_t fs, uint16_t *starts, uint16_t *ends, uint16_t *peaks_locs, float *peaks_amps, uint16_t *new_added){
-    
+
+    RA_LOG_ARRAY("POSTPROC", "_get_cough_peaks", "seg_input", seg, len);
+
     // Downsample //
     int16_t downsample_len = 0.0;
     float* downsample_seg = _downsample(seg, len, fs, &downsample_len);
@@ -76,12 +85,16 @@ void _get_cough_peaks(const float* seg, int16_t len, int16_t fs, uint16_t *start
     // Stores the squared values of the downsampled signal
     float *seg_squared = (float*)malloc(downsample_len * sizeof(float));
     vect_mult(downsample_seg, downsample_seg, downsample_len, seg_squared);
-    
-    float peak = vect_max_value(seg_squared, downsample_len);
+    RA_LOG_ARRAY("POSTPROC", "_get_cough_peaks", "seg_squared", seg_squared, downsample_len);
 
-    // Thresholds 
+    float peak = vect_max_value(seg_squared, downsample_len);
+    RA_LOG_SCALAR("POSTPROC", "_get_cough_peaks", "peak", peak);
+
+    // Thresholds
     float th_low = sqrtf(vect_mean(seg_squared, downsample_len));   // RMS
     float th_high = 0.25 * peak + 0.75 * th_low;
+    RA_LOG_SCALAR("POSTPROC", "_get_cough_peaks", "th_low", th_low);
+    RA_LOG_SCALAR("POSTPROC", "_get_cough_peaks", "th_high", th_high);
 
     int16_t cough_start = 0;
     int16_t cough_end = 0;
@@ -160,6 +173,10 @@ void _get_cough_peaks(const float* seg, int16_t len, int16_t fs, uint16_t *start
     free(seg_squared);
 
     *new_added = peaks_found;
+
+    if(peaks_found > 0){
+        RA_LOG_ARRAY("POSTPROC", "_get_cough_peaks", "peaks_amps", peaks_amps, peaks_found);
+    }
 
 }
 

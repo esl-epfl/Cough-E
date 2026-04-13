@@ -8,6 +8,8 @@
 #include <filtering.h>
 
 #include <audio_features.h>
+#include <range_analysis.h>
+#include <imu_features.h>
 
 
 // Here I put all the functions to compute time domain features
@@ -18,7 +20,7 @@ int16_t _find_peaks(float *x, int16_t len);
 
 
 float get_max(float *sig, int16_t len){
-    
+
     float max = sig[0];
 
     for(int16_t i=1; i<len; i++){
@@ -26,6 +28,7 @@ float get_max(float *sig, int16_t len){
             max = sig[i];
         }
     }
+    RA_IMU_LOG_SCALAR("get_max", "get_max", max);
     return max;
 }
 
@@ -42,9 +45,14 @@ void sub_mean(const float *sig, float *res, int16_t len){
 float get_rms(float *sig, int16_t len){
     float sum = 0;
     for(int16_t i=0; i<len; i++){
-        sum += sig[i] * sig[i];
+        float sq = sig[i] * sig[i];
+        RA_IMU_LOG_SCALAR("get_rms", "sig_sq", sq);
+        sum += sq;
     }
-    return sqrtf(sum / len);
+    RA_IMU_LOG_SCALAR("get_rms", "sum_sq", sum);
+    float result = sqrtf(sum / len);
+    RA_IMU_LOG_SCALAR("get_rms", "result", result);
+    return result;
 }
 
 
@@ -57,11 +65,14 @@ float compute_zrc(float *sig, int16_t len){
 
     for(int16_t i=0; i<len-1; i++){
         interm_product = sig[i] * sig[i + 1];
+        RA_IMU_LOG_SCALAR("compute_zrc", "multiplier", interm_product);
         if(interm_product < 0){
             sum++;
         }
     }
-    return (float) sum / (len - 1);
+    float result = (float) sum / (len - 1);
+    RA_IMU_LOG_SCALAR("compute_zrc", "result", result);
+    return result;
 }
 
 
@@ -112,15 +123,22 @@ void eepd(const float *sig, int16_t len, int16_t fs, const int8_t *select, int16
 
             b = filters_parameters.filters[i].b;
             a = filters_parameters.filters[i].a;
-            zi = filters_parameters.filters[i].zi;  
+            zi = filters_parameters.filters[i].zi;
 
             filtfilt(sig, len, b, a, zi, interm);
+            RA_LOG_ARRAY("AUDIO_EEPD", "eepd", "bandpass_out", interm, len);
+
             vect_mult(interm, interm, len, interm);     // squared vector
+            RA_LOG_ARRAY("AUDIO_EEPD", "eepd", "squared", interm, len);
+
             filtfilt(interm, len, b_second, a_second, zi_second, filtered);
+            RA_LOG_ARRAY("AUDIO_EEPD", "eepd", "envelope", filtered, len);
 
             normalize_max(filtered, len, filtered);   // divide each number by the maximum
+            RA_LOG_ARRAY("AUDIO_EEPD", "eepd", "normalized", filtered, len);
 
             res[i] = _find_peaks(filtered, len);
+            RA_LOG_SCALAR("AUDIO_EEPD", "eepd", "n_peaks", (float)res[i]);
         }
     }
 
