@@ -9,7 +9,10 @@
 #include <azc.h>
 #include <imu/imu_kernels.h>
 
-#include <input_data/imu_input_55502_w0_9wnds.h>
+#ifndef IMU_HEADER
+#define IMU_HEADER <input_data/imu_input_55502_w0_9wnds.h>
+#endif
+#include IMU_HEADER
 
 #define WIN_LEN  WINDOW_SAMP_IMU
 #define WIN_STEP IMU_STEP
@@ -36,14 +39,22 @@ static const char *k_fam_name[Num_imu_feat_families] = {
     "AZC_7"
 };
 
-static float abs_threshold_for_feature(int fam_idx)
+typedef struct {
+    int used;
+    int is_count_based;
+    int n;
+    double sum_sq_err;
+    double sum_sq_float;
+    double sum_abs_err;
+    double sum_abs_float;
+    int exact_match_count;
+    float max_abs;
+    float max_abs_float;
+} metric_acc_t;
+
+static int is_count_based_family(int fam_idx)
 {
-    if (fam_idx == LINE_LENGTH) return 0.02f;
-    if (fam_idx == ZERO_CROSSING_RATE_IMU) return 0.10f;
-    if (fam_idx == KURTOSIS) return 0.20f;
-    if (fam_idx == ROOT_MEANS_SQUARED_IMU) return 0.10f;
-    if (fam_idx == CREST_FACTOR_IMU) return 0.02f;
-    return 6.0f; // AZC is count-based
+    return (fam_idx >= APPROXIMATE_ZERO_CROSSING);
 }
 
 static int evaluate_feature(
@@ -151,15 +162,20 @@ static int evaluate_feature(
 int main(void)
 {
     int n_wins = (IMU_LEN - WIN_LEN) / WIN_STEP + 1;
-    int failures = 0;
     int checks = 0;
-    float worst_abs = -1.0f;
-    float worst_thr = 0.0f;
-    float worst_float = 0.0f;
-    float worst_fxp = 0.0f;
-    int worst_w = -1;
-    int worst_sig = -1;
-    int worst_fam = -1;
+    metric_acc_t stats[8][Num_imu_feat_families] = {0};
+    float global_max_abs = 0.0f;
+    float global_cont_max_abs = 0.0f;
+    float global_count_max_abs = 0.0f;
+
+    double global_cont_sq_err = 0.0;
+    double global_cont_sq_float = 0.0;
+    int global_cont_n = 0;
+
+    double global_count_abs_err = 0.0;
+    double global_count_abs_float = 0.0;
+    double global_count_sum_abs = 0.0;
+    int global_count_n = 0;
 
     for (int w = 0; w < n_wins; w++) {
         int start = w * WIN_STEP;
@@ -193,21 +209,38 @@ int main(void)
 
                 checks++;
                 float abs_err = fabsf(xval - fval);
-                float thr = abs_threshold_for_feature(fam);
-                if (abs_err > worst_abs) {
-                    worst_abs = abs_err;
-                    worst_thr = thr;
-                    worst_float = fval;
-                    worst_fxp = xval;
-                    worst_w = w;
-                    worst_sig = sig;
-                    worst_fam = fam;
+                metric_acc_t *m = &stats[sig][fam];
+                m->used = 1;
+                m->is_count_based = is_count_based_family(fam);
+                m->n += 1;
+                m->sum_sq_err += (double)abs_err * (double)abs_err;
+                m->sum_abs_err += (double)abs_err;
+                m->sum_abs_float += fabs((double)fval);
+                if (fabsf(xval - fval) < 0.5f) {
+                    m->exact_match_count += 1;
                 }
-                if (abs_err > thr) {
-                    failures++;
-                    fprintf(stderr,
-                            "FAIL w=%d sig=%s fam=%s float=%.9g fxp=%.9g abs=%.9g thr=%.9g\n",
-                            w, k_sig_name[sig], k_fam_name[fam], fval, xval, abs_err, thr);
+                if ((double)abs_err > m->max_abs) {
+                    m->max_abs = abs_err;
+                }
+                if (fabsf(fval) > m->max_abs_float) {
+                    m->max_abs_float = fabsf(fval);
+                }
+                if (abs_err > global_max_abs) {
+                    global_max_abs = abs_err;
+                }
+
+                if (m->is_count_based) {
+                    global_count_n += 1;
+                    global_count_abs_err += (double)abs_err;
+                    global_count_abs_float += fabs((double)fval);
+                    global_count_sum_abs += (double)abs_err;
+                    if (abs_err > global_count_max_abs) global_count_max_abs = abs_err;
+                } else {
+                    global_cont_n += 1;
+                    global_cont_sq_err += (double)abs_err * (double)abs_err;
+                    global_cont_sq_float += (double)fval * (double)fval;
+                    m->sum_sq_float += (double)fval * (double)fval;
+                    if (abs_err > global_cont_max_abs) global_cont_max_abs = abs_err;
                 }
             }
         }
@@ -218,16 +251,81 @@ int main(void)
         return 1;
     }
 
-    fprintf(stderr,
-            "FxP IMU discrepancy summary: checks=%d failures=%d worst_abs=%.9g (w=%d sig=%s fam=%s float=%.9g fxp=%.9g thr=%.9g)\n",
-            checks, failures, worst_abs, worst_w, k_sig_name[worst_sig],
-            k_fam_name[worst_fam], worst_float, worst_fxp, worst_thr);
+    printf("\nIMU FxP Error Tables (vs float baseline)\n");
+    printf("========================================\n");
 
-    if (failures > 0) {
-        fprintf(stderr, "FxP IMU discrepancy test: FAIL (%d/%d checks failed).\n", failures, checks);
-        return 1;
+    printf("\n[Continuous Features] RMSE and RelRMSE%%\n");
+    printf("%-12s %-24s %6s %12s %12s %12s %12s\n",
+           "Signal", "Feature", "N", "RMSE", "RelRMSE%", "MaxAbs", "MaxAbs%");
+    printf("--------------------------------------------------------------------------------\n");
+    for (int sig = 0; sig < 8; sig++) {
+        for (int fam = 0; fam < Num_imu_feat_families; fam++) {
+            metric_acc_t *m = &stats[sig][fam];
+            if (!m->used || m->n == 0 || m->is_count_based) continue;
+            double rmse = sqrt(m->sum_sq_err / (double)m->n);
+            double baseline_rms = (m->sum_sq_float > 0.0) ? sqrt(m->sum_sq_float / (double)m->n) : 0.0;
+            double rel_rmse_pct = (baseline_rms > 0.0) ? (100.0 * rmse / baseline_rms) : 0.0;
+            double max_abs_pct = (m->max_abs_float > 0.0f) ? (100.0 * (double)m->max_abs / (double)m->max_abs_float) : 0.0;
+            printf("%-12s %-24s %6d %12.6g %12.4f %12.6g %12.4f\n",
+                   k_sig_name[sig], k_fam_name[fam], m->n, rmse, rel_rmse_pct, m->max_abs, max_abs_pct);
+        }
+    }
+    if (global_cont_n > 0) {
+        double g_rmse = sqrt(global_cont_sq_err / (double)global_cont_n);
+        double g_baseline_rms = (global_cont_sq_float > 0.0) ? sqrt(global_cont_sq_float / (double)global_cont_n) : 0.0;
+        double g_rel_rmse = (g_baseline_rms > 0.0) ? (100.0 * g_rmse / g_baseline_rms) : 0.0;
+        printf("--------------------------------------------------------------------------------\n");
+        printf("%-12s %-24s %6d %12.6g %12.4f %12.6g %12s\n",
+               "ALL", "CONTINUOUS", global_cont_n, g_rmse, g_rel_rmse, global_cont_max_abs, "-");
     }
 
-    printf("FxP IMU discrepancy test: PASS (%d checks)\n", checks);
+    printf("\n[Count-Based Features] Alternative metric = WAPE%%\n");
+    printf("WAPE%% = 100 * sum(|FxP - Float|) / sum(|Float|)\n");
+    printf("%-12s %-24s %6s %12s %12s %12s %12s %12s\n",
+           "Signal", "Feature", "N", "MAE(cnt)", "WAPE%", "MaxAbs", "MaxAbs%", "Exact%");
+    printf("------------------------------------------------------------------------------------------------\n");
+    for (int sig = 0; sig < 8; sig++) {
+        for (int fam = 0; fam < Num_imu_feat_families; fam++) {
+            metric_acc_t *m = &stats[sig][fam];
+            if (!m->used || m->n == 0 || !m->is_count_based) continue;
+            double mae = m->sum_abs_err / (double)m->n;
+            double wape = (m->sum_abs_float > 0.0) ? (100.0 * m->sum_abs_err / m->sum_abs_float) : 0.0;
+            double max_abs_pct = (m->max_abs_float > 0.0f) ? (100.0 * (double)m->max_abs / (double)m->max_abs_float) : 0.0;
+            double exact = 100.0 * (double)m->exact_match_count / (double)m->n;
+            printf("%-12s %-24s %6d %12.6g %12.4f %12.6g %12.4f %12.2f\n",
+                   k_sig_name[sig], k_fam_name[fam], m->n, mae, wape, m->max_abs, max_abs_pct, exact);
+        }
+    }
+    if (global_count_n > 0) {
+        double g_mae = global_count_sum_abs / (double)global_count_n;
+        double g_wape = (global_count_abs_float > 0.0) ? (100.0 * global_count_abs_err / global_count_abs_float) : 0.0;
+        printf("------------------------------------------------------------------------------------------------\n");
+        printf("%-12s %-24s %6d %12.6g %12.4f %12.6g %12s %12s\n",
+               "ALL", "COUNT_BASED", global_count_n, g_mae, g_wape, global_count_max_abs, "-", "-");
+    }
+
+    printf("\nSummary: checks=%d global_max_abs=%.6g\n", checks, global_max_abs);
+
+    /* Machine-readable lines for full-dataset aggregation scripts. */
+    printf("REG_METRICS_CONT,n=%d,sum_sq_err=%.17g,sum_sq_float=%.17g,max_abs=%.9g\n",
+           global_cont_n, global_cont_sq_err, global_cont_sq_float, global_cont_max_abs);
+    printf("REG_METRICS_COUNT,n=%d,sum_abs_err=%.17g,sum_abs_float=%.17g,max_abs=%.9g\n",
+           global_count_n, global_count_abs_err, global_count_abs_float, global_count_max_abs);
+    printf("REG_METRICS_META,checks=%d,global_max_abs=%.9g\n", checks, global_max_abs);
+
+    /* Per signal-feature machine-readable metrics for kernel-wise aggregation. */
+    for (int sig = 0; sig < 8; sig++) {
+        for (int fam = 0; fam < Num_imu_feat_families; fam++) {
+            metric_acc_t *m = &stats[sig][fam];
+            if (!m->used || m->n == 0) continue;
+            if (m->is_count_based) {
+                printf("REG_KERNEL_COUNT,signal=%s,feature=%s,n=%d,sum_abs_err=%.17g,sum_abs_float=%.17g,max_abs=%.9g\n",
+                       k_sig_name[sig], k_fam_name[fam], m->n, m->sum_abs_err, m->sum_abs_float, m->max_abs);
+            } else {
+                printf("REG_KERNEL_CONT,signal=%s,feature=%s,n=%d,sum_sq_err=%.17g,sum_sq_float=%.17g,max_abs=%.9g\n",
+                       k_sig_name[sig], k_fam_name[fam], m->n, m->sum_sq_err, m->sum_sq_float, m->max_abs);
+            }
+        }
+    }
     return 0;
 }

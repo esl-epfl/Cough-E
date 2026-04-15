@@ -14,20 +14,30 @@ Usage:
     python C_application/evaluation/evaluate.py full --subjects 14287 14342         # specific subjects
     python C_application/evaluation/evaluate.py full --dataset_path /path/to/data   # custom dataset path
     python C_application/evaluation/evaluate.py aggregate --csv C_application/evaluation/results.csv  # re-aggregate from CSV
+    python C_application/evaluation/evaluate.py error                               # regression-style error metrics
+    python C_application/evaluation/evaluate.py both                                # ML metrics + regression-style error metrics
 """
 
 import argparse
 import csv
+import glob
 import json
+import math
 import os
 import re
 import subprocess
 import sys
+import tempfile
 from datetime import datetime
-from timescoring.annotations import Annotation
-from timescoring import scoring
 
 import numpy as np
+
+try:
+    from timescoring.annotations import Annotation
+    from timescoring import scoring
+except ModuleNotFoundError:
+    Annotation = None
+    scoring = None
 
 sys.path.insert(0, os.path.dirname(__file__))
 from transform_dataset import (
@@ -66,6 +76,36 @@ CSV_FIELDNAMES = [
     "subject", "trial", "movement", "noise", "sound",
     "tp_evt", "fp_evt", "fn_evt", "se_evt", "ppv_evt", "f1_evt",
     "duration",
+]
+
+ERROR_CSV_FIELDNAMES = [
+    "subject", "trial", "movement", "noise", "sound",
+    "recording",
+    "checks", "global_max_abs",
+    "cont_n", "cont_sq_err", "cont_sq_float", "cont_rmse", "cont_rel_rmse_pct", "cont_max_abs",
+    "count_n", "count_abs_err", "count_abs_float", "count_mae", "count_wape_pct", "count_max_abs",
+]
+
+ERROR_KERNEL_CSV_FIELDNAMES = [
+    "feature", "metric_type", "n", "recordings",
+    "rmse", "rel_rmse_pct", "mae", "wape_pct", "max_abs",
+]
+
+REGRESSION_HARNESS = os.path.join(C_APP_DIR, "test", "fxp_model_regression.c")
+REGRESSION_SRCS = (
+    sorted(glob.glob(os.path.join(C_APP_DIR, "Src", "*.c"))) +
+    sorted(glob.glob(os.path.join(C_APP_DIR, "kiss_fftr", "*.c"))) +
+    sorted(glob.glob(os.path.join(C_APP_DIR, "FxP", "imu", "*.c")))
+)
+REGRESSION_INC = [
+    f"-I{os.path.join(C_APP_DIR, 'Inc')}",
+    f"-I{os.path.join(C_APP_DIR, 'FxP')}",
+    f"-I{C_APP_DIR}",
+    f"-I{os.path.join(C_APP_DIR, 'kiss_fftr')}",
+]
+REGRESSION_CFLAGS = [
+    "-Wall", "-Wextra", "-Wno-unused-function", "-Wno-unused-parameter",
+    "-std=c11", "-O2", "-DFXP_MODE", "-DFIXED_POINT=16",
 ]
 
 
@@ -240,6 +280,12 @@ def score_recording(gt_events, pred_events, duration):
 
     Parameters match ML_methodology/config/scoring/default.yaml.
     """
+    if Annotation is None or scoring is None:
+        raise RuntimeError(
+            "timescoring is required for ML event metrics. "
+            "Install dependencies or run the 'error' command for regression metrics only."
+        )
+
     gt_mask = create_binary_mask(gt_events, duration)
     pred_mask = create_binary_mask(pred_events, duration)
 
@@ -306,21 +352,37 @@ def evaluate_recording(subj_id, trial, mov, noise, sound,
     return scores
 
 
+def get_subject_ids(dataset_path, subjects=None):
+    """Return ordered subject IDs for the selected dataset subset."""
+    if subjects is not None:
+        return subjects
+    return sorted([
+        s for s in os.listdir(dataset_path)
+        if os.path.isdir(os.path.join(dataset_path, s))
+    ])
+
+
+def iter_recordings(dataset_path, subjects=None,
+                    trials=TRIALS, movements=MOVEMENTS,
+                    noises=NOISES, sounds=SOUNDS):
+    """Yield all recording keys for the selected subset."""
+    for subj_id in get_subject_ids(dataset_path, subjects):
+        for trial in trials:
+            for mov in movements:
+                for noise in noises:
+                    for sound in sounds:
+                        yield subj_id, trial, mov, noise, sound
+
+
 def evaluate_subjects(dataset_path, subjects=None,
                       trials=TRIALS, movements=MOVEMENTS,
                       noises=NOISES, sounds=SOUNDS):
     """Evaluate all recordings for the given subjects. Backs up and restores main.h."""
-    if subjects is None:
-        subjects = sorted([
-            s for s in os.listdir(dataset_path)
-            if os.path.isdir(os.path.join(dataset_path, s))
-        ])
-
     backup_main_h()
     all_results = []
 
     try:
-        for subj_id in subjects:
+        for subj_id in get_subject_ids(dataset_path, subjects):
             print(f"\n=== Subject {subj_id} ===")
             for trial in trials:
                 for mov in movements:
@@ -338,6 +400,310 @@ def evaluate_subjects(dataset_path, subjects=None,
         restore_main_h()
 
     return all_results
+
+
+# ──────────────────────────────────────────────
+#  FxP regression-style error metrics
+# ──────────────────────────────────────────────
+
+def compile_regression_harness(imu_relpath, out_bin):
+    """
+    Compile fxp_model_regression.c for one recording by injecting IMU_HEADER.
+    """
+    imu_header = f"input_data/{imu_relpath}"
+    cmd = (
+        ["gcc"] +
+        REGRESSION_CFLAGS +
+        [f"-DIMU_HEADER=<{imu_header}>", "-o", out_bin, REGRESSION_HARNESS] +
+        REGRESSION_SRCS +
+        REGRESSION_INC +
+        ["-lm"]
+    )
+    result = subprocess.run(cmd, capture_output=True, text=True)
+    if result.returncode != 0:
+        print(f"    [COMPILE ERROR] {imu_relpath}")
+        if result.stderr:
+            print(result.stderr[:800])
+        return False
+    return True
+
+
+def parse_regression_metrics(output):
+    """
+    Parse machine-readable lines emitted by fxp_model_regression.c.
+    """
+    parsed = {}
+    kernel_rows = []
+    for line in output.splitlines():
+        line = line.strip()
+        if not line.startswith("REG_METRICS_"):
+            if line.startswith("REG_KERNEL_"):
+                parts = line.split(",")
+                tag = parts[0]
+                kv = {}
+                for part in parts[1:]:
+                    if "=" not in part:
+                        continue
+                    key, val = part.split("=", 1)
+                    kv[key.strip()] = val.strip()
+                kv["_tag"] = tag
+                kernel_rows.append(kv)
+            continue
+        parts = line.split(",")
+        tag = parts[0]
+        kv = {}
+        for part in parts[1:]:
+            if "=" not in part:
+                continue
+            key, val = part.split("=", 1)
+            kv[key.strip()] = val.strip()
+        parsed[tag] = kv
+
+    cont = parsed.get("REG_METRICS_CONT")
+    count = parsed.get("REG_METRICS_COUNT")
+    meta = parsed.get("REG_METRICS_META")
+    if cont is None or count is None or meta is None:
+        return None
+
+    try:
+        out = {
+            "cont_n": int(cont["n"]),
+            "cont_sq_err": float(cont["sum_sq_err"]),
+            "cont_sq_float": float(cont["sum_sq_float"]),
+            "cont_max_abs": float(cont["max_abs"]),
+            "count_n": int(count["n"]),
+            "count_abs_err": float(count["sum_abs_err"]),
+            "count_abs_float": float(count["sum_abs_float"]),
+            "count_max_abs": float(count["max_abs"]),
+            "checks": int(meta["checks"]),
+            "global_max_abs": float(meta["global_max_abs"]),
+        }
+        typed_kernels = []
+        for k in kernel_rows:
+            if k.get("_tag") == "REG_KERNEL_CONT":
+                typed_kernels.append({
+                    "metric_type": "continuous",
+                    "signal": k["signal"],
+                    "feature": k["feature"],
+                    "n": int(k["n"]),
+                    "sum_sq_err": float(k["sum_sq_err"]),
+                    "sum_sq_float": float(k["sum_sq_float"]),
+                    "max_abs": float(k["max_abs"]),
+                })
+            elif k.get("_tag") == "REG_KERNEL_COUNT":
+                typed_kernels.append({
+                    "metric_type": "count_based",
+                    "signal": k["signal"],
+                    "feature": k["feature"],
+                    "n": int(k["n"]),
+                    "sum_abs_err": float(k["sum_abs_err"]),
+                    "sum_abs_float": float(k["sum_abs_float"]),
+                    "max_abs": float(k["max_abs"]),
+                })
+        out["kernel_rows"] = typed_kernels
+        return out
+    except (KeyError, ValueError):
+        return None
+
+
+def run_regression_harness(bin_path):
+    """Run compiled regression harness and parse machine-readable metrics."""
+    try:
+        result = subprocess.run([bin_path], capture_output=True, text=True, timeout=60)
+    except subprocess.TimeoutExpired:
+        return None
+    if result.returncode != 0:
+        return None
+    return parse_regression_metrics(result.stdout)
+
+
+def _enrich_error_row(row):
+    """Add derived per-recording metrics to an error row."""
+    cont_n = row["cont_n"]
+    count_n = row["count_n"]
+
+    cont_rmse = math.sqrt(row["cont_sq_err"] / cont_n) if cont_n > 0 else 0.0
+    cont_baseline_rms = math.sqrt(row["cont_sq_float"] / cont_n) if cont_n > 0 and row["cont_sq_float"] > 0 else 0.0
+    cont_rel_rmse_pct = (100.0 * cont_rmse / cont_baseline_rms) if cont_baseline_rms > 0 else 0.0
+
+    count_mae = (row["count_abs_err"] / count_n) if count_n > 0 else 0.0
+    count_wape_pct = (100.0 * row["count_abs_err"] / row["count_abs_float"]) if row["count_abs_float"] > 0 else 0.0
+
+    row["cont_rmse"] = cont_rmse
+    row["cont_rel_rmse_pct"] = cont_rel_rmse_pct
+    row["count_mae"] = count_mae
+    row["count_wape_pct"] = count_wape_pct
+    return row
+
+
+def evaluate_error_metrics(dataset_path, subjects=None,
+                           trials=TRIALS, movements=MOVEMENTS,
+                           noises=NOISES, sounds=SOUNDS):
+    """
+    Run fxp_model_regression metrics across the selected dataset subset.
+    """
+    rows = []
+    current_subject = None
+
+    with tempfile.TemporaryDirectory() as tmpdir:
+        bin_path = os.path.join(tmpdir, "fxp_model_regression_eval")
+
+        for subj_id, trial, mov, noise, sound in iter_recordings(
+            dataset_path, subjects=subjects, trials=trials,
+            movements=movements, noises=noises, sounds=sounds,
+        ):
+            if subj_id != current_subject:
+                current_subject = subj_id
+                print(f"\n=== Subject {subj_id} (error metrics) ===")
+
+            rec_id = f"t{trial}_{mov}_{noise}_{sound}"
+            transformed = transform_recording(
+                subj_id, trial, mov, noise, sound, dataset_path, INPUT_DATA_DIR
+            )
+            if transformed is None:
+                continue
+
+            suffix, _, imu_relpath, _ = transformed
+            if not compile_regression_harness(imu_relpath, bin_path):
+                print(f"  {rec_id}: SKIP (compile error)")
+                continue
+
+            metrics = run_regression_harness(bin_path)
+            if metrics is None:
+                print(f"  {rec_id}: SKIP (runtime/parse error)")
+                continue
+
+            row = {
+                "subject": subj_id,
+                "trial": trial,
+                "movement": mov,
+                "noise": noise,
+                "sound": sound,
+                "recording": suffix,
+                **metrics,
+            }
+            _enrich_error_row(row)
+            rows.append(row)
+            print(f"  {rec_id}: checks={row['checks']}")
+
+    return rows
+
+
+def compute_error_aggregate(rows):
+    """Aggregate regression-style error metrics across recordings."""
+    cont_n = sum(r["cont_n"] for r in rows)
+    cont_sq_err = sum(r["cont_sq_err"] for r in rows)
+    cont_sq_float = sum(r["cont_sq_float"] for r in rows)
+    cont_max_abs = max((r["cont_max_abs"] for r in rows), default=0.0)
+
+    count_n = sum(r["count_n"] for r in rows)
+    count_abs_err = sum(r["count_abs_err"] for r in rows)
+    count_abs_float = sum(r["count_abs_float"] for r in rows)
+    count_max_abs = max((r["count_max_abs"] for r in rows), default=0.0)
+
+    checks = sum(r["checks"] for r in rows)
+    global_max_abs = max((r["global_max_abs"] for r in rows), default=0.0)
+
+    cont_rmse = math.sqrt(cont_sq_err / cont_n) if cont_n > 0 else 0.0
+    cont_baseline_rms = math.sqrt(cont_sq_float / cont_n) if cont_n > 0 and cont_sq_float > 0 else 0.0
+    cont_rel_rmse_pct = (100.0 * cont_rmse / cont_baseline_rms) if cont_baseline_rms > 0 else 0.0
+
+    count_mae = (count_abs_err / count_n) if count_n > 0 else 0.0
+    count_wape_pct = (100.0 * count_abs_err / count_abs_float) if count_abs_float > 0 else 0.0
+
+    return {
+        "total_recordings": len(rows),
+        "checks": checks,
+        "global_max_abs": global_max_abs,
+        "cont_n": cont_n,
+        "cont_sq_err": cont_sq_err,
+        "cont_sq_float": cont_sq_float,
+        "cont_rmse": cont_rmse,
+        "cont_rel_rmse_pct": cont_rel_rmse_pct,
+        "cont_max_abs": cont_max_abs,
+        "count_n": count_n,
+        "count_abs_err": count_abs_err,
+        "count_abs_float": count_abs_float,
+        "count_mae": count_mae,
+        "count_wape_pct": count_wape_pct,
+        "count_max_abs": count_max_abs,
+    }
+
+
+def compute_error_per_subject(rows):
+    """Compute per-subject error-metric aggregates."""
+    by_subject = {}
+    for subj_id in sorted(set(r["subject"] for r in rows)):
+        subj_rows = [r for r in rows if r["subject"] == subj_id]
+        by_subject[subj_id] = compute_error_aggregate(subj_rows)
+    return by_subject
+
+
+def compute_kernel_aggregate(rows):
+    """
+    Aggregate metrics per kernel feature across all recordings.
+    Kernels are grouped by feature family name (e.g., LINE_LENGTH, KURTOSIS, AZC_0...).
+    """
+    acc = {}
+    for r in rows:
+        for k in r.get("kernel_rows", []):
+            feat = k["feature"]
+            if feat not in acc:
+                acc[feat] = {
+                    "feature": feat,
+                    "metric_type": k["metric_type"],
+                    "n": 0,
+                    "_recordings": set(),
+                    "sum_sq_err": 0.0,
+                    "sum_sq_float": 0.0,
+                    "sum_abs_err": 0.0,
+                    "sum_abs_float": 0.0,
+                    "max_abs": 0.0,
+                }
+            a = acc[feat]
+            a["_recordings"].add(r["recording"])
+            a["n"] += k["n"]
+            a["max_abs"] = max(a["max_abs"], k["max_abs"])
+            if k["metric_type"] == "continuous":
+                a["sum_sq_err"] += k["sum_sq_err"]
+                a["sum_sq_float"] += k["sum_sq_float"]
+            else:
+                a["sum_abs_err"] += k["sum_abs_err"]
+                a["sum_abs_float"] += k["sum_abs_float"]
+
+    out = []
+    for feat in sorted(acc):
+        a = acc[feat]
+        if a["metric_type"] == "continuous":
+            rmse = math.sqrt(a["sum_sq_err"] / a["n"]) if a["n"] > 0 else 0.0
+            baseline_rms = math.sqrt(a["sum_sq_float"] / a["n"]) if a["n"] > 0 and a["sum_sq_float"] > 0 else 0.0
+            rel_rmse_pct = (100.0 * rmse / baseline_rms) if baseline_rms > 0 else 0.0
+            out.append({
+                "feature": feat,
+                "metric_type": "continuous",
+                "n": a["n"],
+                "recordings": len(a["_recordings"]),
+                "rmse": rmse,
+                "rel_rmse_pct": rel_rmse_pct,
+                "mae": 0.0,
+                "wape_pct": 0.0,
+                "max_abs": a["max_abs"],
+            })
+        else:
+            mae = (a["sum_abs_err"] / a["n"]) if a["n"] > 0 else 0.0
+            wape_pct = (100.0 * a["sum_abs_err"] / a["sum_abs_float"]) if a["sum_abs_float"] > 0 else 0.0
+            out.append({
+                "feature": feat,
+                "metric_type": "count_based",
+                "n": a["n"],
+                "recordings": len(a["_recordings"]),
+                "rmse": 0.0,
+                "rel_rmse_pct": 0.0,
+                "mae": mae,
+                "wape_pct": wape_pct,
+                "max_abs": a["max_abs"],
+            })
+    return out
 
 
 # ──────────────────────────────────────────────
@@ -475,6 +841,151 @@ def print_results(results, aggregate):
     return per_subject
 
 
+def save_error_results_csv(results, output_path):
+    """Save per-recording regression-style error metrics to CSV."""
+    with open(output_path, "w", newline="") as f:
+        writer = csv.DictWriter(f, fieldnames=ERROR_CSV_FIELDNAMES)
+        writer.writeheader()
+        for r in results:
+            writer.writerow({k: r[k] for k in ERROR_CSV_FIELDNAMES})
+    print(f"Error metrics CSV saved to {output_path}")
+
+
+def save_error_kernel_summary_csv(kernel_rows, output_path):
+    """Save aggregated per-kernel error metrics to CSV."""
+    with open(output_path, "w", newline="") as f:
+        writer = csv.DictWriter(f, fieldnames=ERROR_KERNEL_CSV_FIELDNAMES)
+        writer.writeheader()
+        for r in kernel_rows:
+            writer.writerow({k: r[k] for k in ERROR_KERNEL_CSV_FIELDNAMES})
+    print(f"Kernel summary CSV saved to {output_path}")
+
+
+def print_error_results(results, aggregate):
+    """Print per-subject and overall regression-style error metrics."""
+    print("\n" + "=" * 70)
+    print("REGRESSION-STYLE ERROR METRICS (FxP vs FLOAT)")
+    print("=" * 70)
+
+    per_subject = compute_error_per_subject(results)
+    for subj_id in sorted(per_subject):
+        a = per_subject[subj_id]
+        print(f"\nSubject {subj_id}:")
+        print(f"  CONT: RMSE={a['cont_rmse']:.6g}  RelRMSE={a['cont_rel_rmse_pct']:.4f}%  MaxAbs={a['cont_max_abs']:.6g}")
+        print(f"  AZC : MAE={a['count_mae']:.6g}  WAPE={a['count_wape_pct']:.4f}%  MaxAbs={a['count_max_abs']:.6g}")
+
+    print(f"\n{'=' * 70}")
+    print(f"OVERALL ({aggregate['total_recordings']} recordings)")
+    print(f"{'=' * 70}")
+    print(f"  checks            = {aggregate['checks']}")
+    print(f"  global_max_abs    = {aggregate['global_max_abs']:.6g}")
+    print(f"  CONT n            = {aggregate['cont_n']}")
+    print(f"  CONT RMSE         = {aggregate['cont_rmse']:.6g}")
+    print(f"  CONT RelRMSE      = {aggregate['cont_rel_rmse_pct']:.4f}%")
+    print(f"  CONT MaxAbs       = {aggregate['cont_max_abs']:.6g}")
+    print(f"  COUNT n           = {aggregate['count_n']}")
+    print(f"  COUNT MAE         = {aggregate['count_mae']:.6g}")
+    print(f"  COUNT WAPE        = {aggregate['count_wape_pct']:.4f}%")
+    print(f"  COUNT MaxAbs      = {aggregate['count_max_abs']:.6g}")
+    print("=" * 70)
+
+    return per_subject
+
+
+def print_kernel_summary(kernel_rows):
+    """Print aggregated per-kernel metrics."""
+    print("\n" + "=" * 70)
+    print("PER-KERNEL AGGREGATE ERROR METRICS")
+    print("=" * 70)
+    print(f"{'Kernel':<28} {'Type':<11} {'N':>8} {'Metric':>14} {'MaxAbs':>14}")
+    print("-" * 70)
+    for r in kernel_rows:
+        if r["metric_type"] == "continuous":
+            metric = f"RMSE={r['rmse']:.5g} ({r['rel_rmse_pct']:.3f}%)"
+            mtype = "cont"
+        else:
+            metric = f"WAPE={r['wape_pct']:.3f}%"
+            mtype = "count"
+        print(f"{r['feature']:<28} {mtype:<11} {r['n']:>8} {metric:>14} {r['max_abs']:>14.6g}")
+    print("=" * 70)
+
+
+def _build_error_per_subject_json(per_subject):
+    """Build serialisable per-subject error metrics block."""
+    result = {}
+    for subj_id, a in per_subject.items():
+        result[subj_id] = {
+            "continuous": {
+                "N": a["cont_n"],
+                "RMSE": round(a["cont_rmse"], 8),
+                "RelRMSE_pct": round(a["cont_rel_rmse_pct"], 6),
+                "MaxAbs": round(a["cont_max_abs"], 8),
+            },
+            "count_based": {
+                "N": a["count_n"],
+                "MAE": round(a["count_mae"], 8),
+                "WAPE_pct": round(a["count_wape_pct"], 6),
+                "MaxAbs": round(a["count_max_abs"], 8),
+            },
+            "checks": a["checks"],
+            "global_max_abs": round(a["global_max_abs"], 8),
+        }
+    return result
+
+
+def _build_kernel_summary_json(kernel_rows):
+    """Build serialisable kernel summary block."""
+    out = []
+    for r in kernel_rows:
+        entry = {
+            "feature": r["feature"],
+            "metric_type": r["metric_type"],
+            "N": r["n"],
+            "recordings": r["recordings"],
+            "max_abs": round(r["max_abs"], 8),
+        }
+        if r["metric_type"] == "continuous":
+            entry["rmse"] = round(r["rmse"], 8)
+            entry["rel_rmse_pct"] = round(r["rel_rmse_pct"], 6)
+        else:
+            entry["mae"] = round(r["mae"], 8)
+            entry["wape_pct"] = round(r["wape_pct"], 6)
+        out.append(entry)
+    return out
+
+
+def save_error_summary_json(aggregate, output_path, per_subject=None, kernel_rows=None):
+    """Save aggregated regression-style error metrics to JSON."""
+    summary = {
+        "timestamp": datetime.now().isoformat(),
+        "overall": {
+            "continuous": {
+                "N": aggregate["cont_n"],
+                "RMSE": round(aggregate["cont_rmse"], 8),
+                "RelRMSE_pct": round(aggregate["cont_rel_rmse_pct"], 6),
+                "MaxAbs": round(aggregate["cont_max_abs"], 8),
+            },
+            "count_based": {
+                "N": aggregate["count_n"],
+                "MAE": round(aggregate["count_mae"], 8),
+                "WAPE_pct": round(aggregate["count_wape_pct"], 6),
+                "MaxAbs": round(aggregate["count_max_abs"], 8),
+            },
+            "checks": aggregate["checks"],
+            "global_max_abs": round(aggregate["global_max_abs"], 8),
+            "total_recordings": aggregate["total_recordings"],
+        },
+    }
+    if per_subject:
+        summary["per_subject"] = _build_error_per_subject_json(per_subject)
+    if kernel_rows:
+        summary["per_kernel"] = _build_kernel_summary_json(kernel_rows)
+
+    with open(output_path, "w") as f:
+        json.dump(summary, f, indent=2)
+    print(f"Error metrics summary JSON saved to {output_path}")
+
+
 # ──────────────────────────────────────────────
 #  CLI subcommands
 # ──────────────────────────────────────────────
@@ -609,6 +1120,41 @@ def cmd_compare(args):
     print(f"\nComparison saved to {cmp_path}")
 
 
+def cmd_error(args):
+    """Run regression-style FxP-vs-float error metrics across the selected dataset."""
+    rows = evaluate_error_metrics(
+        args.dataset_path,
+        subjects=args.subjects,
+        sounds=args.sounds,
+        noises=args.noises,
+    )
+    if not rows:
+        print("No recordings processed for error metrics. Check dataset path and subject IDs.")
+        sys.exit(1)
+
+    aggregate = compute_error_aggregate(rows)
+    print_error_results(rows, aggregate)
+    kernel_rows = compute_kernel_aggregate(rows)
+    print_kernel_summary(kernel_rows)
+
+
+def cmd_both(args):
+    """
+    Run ML metrics and regression-style error metrics in one command.
+    ML phase can be either run-mode or compare-mode.
+    """
+    ml_mode = getattr(args, "ml_mode", "compare")
+    if ml_mode == "run":
+        print("=== ML metrics (run mode) ===")
+        cmd_run(args)
+    else:
+        print("=== ML metrics (compare mode) ===")
+        cmd_compare(args)
+
+    print("\n=== Regression-style error metrics ===")
+    cmd_error(args)
+
+
 def main():
     parser = argparse.ArgumentParser(
         description="Evaluate Cough-E C application against full_dataset_test")
@@ -647,6 +1193,18 @@ def main():
                                       help="Run float and FxP evaluations side-by-side")
     add_common_args(p_compare)
     p_compare.set_defaults(func=cmd_compare)
+
+    p_error = subparsers.add_parser("error",
+                                    help="Run regression-style error metrics on selected recordings")
+    add_common_args(p_error)
+    p_error.set_defaults(func=cmd_error)
+
+    p_both = subparsers.add_parser("both",
+                                   help="Run ML metrics and regression-style error metrics")
+    add_common_args(p_both, fxp_flag=True)
+    p_both.add_argument("--ml_mode", choices=["compare", "run"], default="compare",
+                        help="ML phase mode for 'both' command (default: compare)")
+    p_both.set_defaults(func=cmd_both)
 
     args = parser.parse_args()
 
