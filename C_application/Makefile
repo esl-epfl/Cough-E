@@ -8,7 +8,7 @@ PYTHON      =   python3
 SRC_DIRS 	= 	Src kiss_fftr FxP/imu
 SRC 		= 	$(foreach c, $(SRC_DIRS), $(wildcard $c/*.c))
 
-INC_DIRS 	= 	Inc FxP ./ kiss_fftr
+INC_DIRS 	= 	Inc FxP ./ kiss_fftr range_analysis
 INC 		= 	$(foreach d, $(INC_DIRS), -I$d)
 
 QFMT_MANIFEST = FxP/core/qformats.yaml

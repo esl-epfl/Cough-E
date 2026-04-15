@@ -11,7 +11,7 @@
 #include <imu_features.h>
 
 #ifdef FXP_MODE
-#include <fxp.h>
+#include <core/fxp_convert.h>
 #endif
 #include <range_analysis.h>
 
@@ -476,12 +476,6 @@ static const char *_imu_signal_names[] = {
 
 void compute_imu_family(const int8_t *features_selector, const float signal[][Num_IMU_signals], int16_t len, int8_t signal_idx, int8_t sig_feat_idx, float *feats){
 
-    // This array is filled with the proper signal samples
-
-    // This array is filled with the proper signal samples
-    float *signal_samples = (float*)malloc(len * sizeof(float));
-
-
     if(is_required(features_selector, sig_feat_idx, sig_feat_idx+Num_imu_feat_families-1)){
 
         // Extract samples for the required signal axis
@@ -490,23 +484,13 @@ void compute_imu_family(const int8_t *features_selector, const float signal[][Nu
             signal_samples[i] = signal[i][signal_idx];
         }
 
-#ifdef FXP_MODE
-        // Convert float samples to Q11.5 and dispatch via _Generic (RAW)
-        q11_5_t *sig_fxp = (q11_5_t*)malloc(len * sizeof(q11_5_t));
-        for(int16_t i=0; i<len; i++){
-            sig_fxp[i] = FXP_IMU_RAW_FROM_FLOAT(signal_samples[i]);
-        }
-        imu_sig_raw_t s = { .data = sig_fxp, .len = len };
-        IMU_SIGNAL_FEATURES(&features_selector[sig_feat_idx], s, &feats[sig_feat_idx]);
-        free(sig_fxp);
-#else
         RA_LOG_ARRAY("IMU_RAW", "imu_features", _imu_signal_names[signal_idx], signal_samples, len);
 
         RA_SET_IMU_CTX("IMU_RAW");
         imu_sig_float_t s = { .data = signal_samples, .len = len };
         imu_run_feature_table(&features_selector[sig_feat_idx], imu_view_from_float(s), &feats[sig_feat_idx]);
-        free(signal_samples);
         RA_CLEAR_IMU_CTX();
+        free(signal_samples);
     }
 }
 

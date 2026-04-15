@@ -5,7 +5,7 @@
 CC      = gcc
 ROOT    = ..
 SRCS    = $(wildcard $(ROOT)/Src/*.c) $(wildcard $(ROOT)/kiss_fftr/*.c) $(wildcard $(ROOT)/FxP/imu/*.c)
-INC     = -I$(ROOT)/Inc -I$(ROOT)/FxP -I$(ROOT) -I$(ROOT)/kiss_fftr
+INC     = -I$(ROOT)/Inc -I$(ROOT)/FxP -I$(ROOT) -I$(ROOT)/kiss_fftr -I$(ROOT)/range_analysis
 CFLAGS  = -Wall -Wextra -Wno-unused-function -std=c11 -g -DFXP_MODE
 LIBS    = -lm
 PYTHON  = python3

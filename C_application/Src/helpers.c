@@ -4,9 +4,6 @@
 
 #include <helpers.h>
 
-#ifdef FXP_MODE
-#include <fxp.h>
-#endif
 #include <range_analysis.h>
 
 // Minimum float available (supposing 32-bit float)

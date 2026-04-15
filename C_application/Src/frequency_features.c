@@ -13,9 +13,6 @@
 #include <audio_features.h>
 
 #include <kiss_fftr.h>
-#ifdef FIXED_POINT
-#  include <fxp.h>
-#endif
 #include <range_analysis.h>
 
 
