@@ -102,10 +102,11 @@ REGRESSION_INC = [
     f"-I{os.path.join(C_APP_DIR, 'FxP')}",
     f"-I{C_APP_DIR}",
     f"-I{os.path.join(C_APP_DIR, 'kiss_fftr')}",
+    f"-I{os.path.join(C_APP_DIR, 'range_analysis')}",
 ]
 REGRESSION_CFLAGS = [
     "-Wall", "-Wextra", "-Wno-unused-function", "-Wno-unused-parameter",
-    "-std=c11", "-O2", "-DFXP_MODE", "-DFIXED_POINT=16",
+    "-std=c11", "-O2", "-DFXP_MODE",
 ]
 
 
