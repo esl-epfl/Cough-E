@@ -14,6 +14,9 @@ INC 		= 	$(foreach d, $(INC_DIRS), -I$d)
 QFMT_MANIFEST = FxP/core/qformats.yaml
 QFMT_GENERATOR = FxP/tools/generate_qformats.py
 QFMT_HEADER = FxP/core/fxp_qformats.h
+TWIDDLE_GENERATOR = kiss_fftr/gen_twiddles_fixed.py
+TWIDDLE_Q15 = kiss_fftr/twiddles_win08_fs8000_q15.h
+TWIDDLE_Q31 = kiss_fftr/twiddles_win08_fs8000_q31.h
 
 MATH 		= 	-lm
 
@@ -41,7 +44,10 @@ EXEC_STRING +=	"|++++++++++++++++++++++++++++++++|\n"
 $(QFMT_HEADER): $(QFMT_MANIFEST) $(QFMT_GENERATOR)
 	$(PYTHON) $(QFMT_GENERATOR) $(QFMT_MANIFEST) $(QFMT_HEADER)
 
-all: $(QFMT_HEADER)
+$(TWIDDLE_Q15) $(TWIDDLE_Q31): $(TWIDDLE_GENERATOR)
+	$(PYTHON) $(TWIDDLE_GENERATOR) --formats q15 q31 --out-dir kiss_fftr
+
+all: $(QFMT_HEADER) $(TWIDDLE_Q15) $(TWIDDLE_Q31)
 	@mkdir -p $(BUILD_DIR)
 	$(CC) -Wall -o $(BUILD_DIR)/$(APP) main.c $(SRC) $(INC) $(MATH) -O3 -g $(CFLAGS)
 	@echo $(COMP_STRING)

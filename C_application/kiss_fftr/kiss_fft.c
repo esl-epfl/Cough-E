@@ -13,10 +13,12 @@ THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS" AND 
 */
 
 // #include "twiddles.h"
-#ifdef FIXED_POINT
+#if defined(FIXED_POINT) && (FIXED_POINT == 32)
+#  include "twiddles_win08_fs8000_q31.h"   /* int32_t Q1.31 twiddles */
+#elif defined(FIXED_POINT)
 #  include "twiddles_win08_fs8000_q15.h"   /* int16_t Q1.15 twiddles */
 #else
-#  include "twiddles_win08_fs8000.h"        /* float twiddles */
+#  include "twiddles_win08_fs8000.h"       /* float twiddles */
 #endif
 
 #include "_kiss_fft_guts.h"
@@ -320,8 +322,10 @@ static
 void kf_factor(int n,int * facbuf)
 {
     int p=4;
+#ifndef FIXED_POINT
     float floor_sqrt;
     floor_sqrt = floor( sqrt((float)n) );
+#endif
 
     /*factor out powers of 4, powers of 2, then any remaining primes */
     do {
@@ -331,8 +335,16 @@ void kf_factor(int n,int * facbuf)
                 case 2: p = 3; break;
                 default: p += 2; break;
             }
+#ifdef FIXED_POINT
+            /* Integer-only termination for fixed-point builds:
+             * p*p > n  <=>  p > n/p, avoids float sqrt/floor at config time.
+             */
+            if (p > n / p)
+                p = n;          /* no more factors, skip to end */
+#else
             if (p > floor_sqrt)
                 p = n;          /* no more factors, skip to end */
+#endif
         }
         n /= p;
         *facbuf++ = p;

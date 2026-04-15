@@ -999,14 +999,21 @@ def cmd_transform(args):
 def cmd_run(args):
     """Run evaluation (transforms dataset if needed)."""
     output_dir = args.output_dir or os.path.dirname(__file__)
-    os.makedirs(output_dir, exist_ok=True)
+    if not getattr(args, "no_save", False):
+        os.makedirs(output_dir, exist_ok=True)
 
+    compile_flags = []
     if getattr(args, "fxp", False):
-        flags = "-DFXP_MODE"
-        evaluate_recording._extra_flags = flags
-        print(f"FxP mode enabled ({flags})")
+        compile_flags.append("-DFXP_MODE")
+    kissfft_fixed = getattr(args, "kissfft_fixed", None)
+    if kissfft_fixed is not None:
+        compile_flags.append(f"-DFIXED_POINT={kissfft_fixed}")
+
+    evaluate_recording._extra_flags = " ".join(compile_flags)
+    if compile_flags:
+        print(f"Custom compile flags enabled ({evaluate_recording._extra_flags})")
     else:
-        evaluate_recording._extra_flags = ""
+        print("Using default float compile flags")
 
     results = evaluate_subjects(
         args.dataset_path,
@@ -1022,9 +1029,12 @@ def cmd_run(args):
     aggregate = compute_aggregate_metrics(results)
     per_subject = print_results(results, aggregate)
 
-    save_results_csv(results, os.path.join(output_dir, "results.csv"))
-    save_summary_json(aggregate, os.path.join(output_dir, "summary.json"),
-                      build_per_subject_json(per_subject))
+    if getattr(args, "no_save", False):
+        print("Skipping CSV/JSON output (--no-save enabled)")
+    else:
+        save_results_csv(results, os.path.join(output_dir, "results.csv"))
+        save_summary_json(aggregate, os.path.join(output_dir, "summary.json"),
+                          build_per_subject_json(per_subject))
 
 
 def cmd_aggregate(args):
@@ -1049,7 +1059,8 @@ def cmd_full(args):
 def cmd_compare(args):
     """Run float then FxP evaluation and print a side-by-side comparison."""
     output_dir = args.output_dir or os.path.dirname(__file__)
-    os.makedirs(output_dir, exist_ok=True)
+    if not getattr(args, "no_save", False):
+        os.makedirs(output_dir, exist_ok=True)
 
     dataset_path = args.dataset_path
 
@@ -1060,15 +1071,21 @@ def cmd_compare(args):
     float_agg = compute_aggregate_metrics(float_results)
 
     print("\n=== FxP evaluation ===")
-    fxp_flags = "-DFXP_MODE"
+    fxp_flags = ["-DFXP_MODE"]
+    kissfft_fixed = getattr(args, "kissfft_fixed", None)
+    if kissfft_fixed is not None:
+        fxp_flags.append(f"-DFIXED_POINT={kissfft_fixed}")
+    fxp_flags = " ".join(fxp_flags)
+    print(f"Compile flags: {fxp_flags}")
     evaluate_recording._extra_flags = fxp_flags
     fxp_results = evaluate_subjects(dataset_path, subjects=args.subjects,
                                     sounds=args.sounds, noises=args.noises)
     fxp_agg = compute_aggregate_metrics(fxp_results)
 
     # Save individual CSVs
-    save_results_csv(float_results, os.path.join(output_dir, "results_float.csv"))
-    save_results_csv(fxp_results,   os.path.join(output_dir, "results_fxp.csv"))
+    if not getattr(args, "no_save", False):
+        save_results_csv(float_results, os.path.join(output_dir, "results_float.csv"))
+        save_results_csv(fxp_results,   os.path.join(output_dir, "results_fxp.csv"))
 
     # Print comparison
     print("\n" + "=" * 70)
@@ -1115,10 +1132,13 @@ def cmd_compare(args):
             "fphr_evt": round(delta_fp, 1),
         },
     }
-    cmp_path = os.path.join(output_dir, "comparison_float_vs_fxp.json")
-    with open(cmp_path, "w") as f:
-        json.dump(comparison, f, indent=2)
-    print(f"\nComparison saved to {cmp_path}")
+    if getattr(args, "no_save", False):
+        print("\nSkipping comparison JSON output (--no-save enabled)")
+    else:
+        cmp_path = os.path.join(output_dir, "comparison_float_vs_fxp.json")
+        with open(cmp_path, "w") as f:
+            json.dump(comparison, f, indent=2)
+        print(f"\nComparison saved to {cmp_path}")
 
 
 def cmd_error(args):
@@ -1161,7 +1181,7 @@ def main():
         description="Evaluate Cough-E C application against full_dataset_test")
     subparsers = parser.add_subparsers(dest="command")
 
-    def add_common_args(p, fxp_flag=False):
+    def add_common_args(p, fxp_flag=False, kissfft_flag=False, save_flag=False):
         p.add_argument("--dataset_path", type=str, default=DEFAULT_DATASET_PATH,
                         help=f"Path to full_dataset_test (default: {DEFAULT_DATASET_PATH})")
         p.add_argument("--subjects", nargs="+", type=str, default=None,
@@ -1173,13 +1193,31 @@ def main():
         if fxp_flag:
             p.add_argument("--fxp", action="store_true", default=False,
                            help="Compile with -DFXP_MODE (IMU fixed-point kernels)")
+        if kissfft_flag:
+            p.add_argument(
+                "--kissfft-fixed",
+                type=int,
+                choices=[16, 32],
+                default=None,
+                help=(
+                    "Compile KissFFT in fixed-point mode with selected precision "
+                    "(-DFIXED_POINT=16 or -DFIXED_POINT=32)."
+                ),
+            )
+        if save_flag:
+            p.add_argument(
+                "--no-save",
+                action="store_true",
+                default=False,
+                help="Print metrics only; do not write CSV/JSON outputs.",
+            )
 
     p_transform = subparsers.add_parser("transform", help="Generate C headers from dataset")
     add_common_args(p_transform)
     p_transform.set_defaults(func=cmd_transform)
 
     p_run = subparsers.add_parser("run", help="Run evaluation")
-    add_common_args(p_run, fxp_flag=True)
+    add_common_args(p_run, fxp_flag=True, kissfft_flag=True, save_flag=True)
     p_run.set_defaults(func=cmd_run)
 
     p_agg = subparsers.add_parser("aggregate", help="Compute metrics from existing CSV")
@@ -1187,12 +1225,12 @@ def main():
     p_agg.set_defaults(func=cmd_aggregate)
 
     p_full = subparsers.add_parser("full", help="Transform dataset + run evaluation")
-    add_common_args(p_full, fxp_flag=True)
+    add_common_args(p_full, fxp_flag=True, kissfft_flag=True, save_flag=True)
     p_full.set_defaults(func=cmd_full)
 
     p_compare = subparsers.add_parser("compare",
                                       help="Run float and FxP evaluations side-by-side")
-    add_common_args(p_compare)
+    add_common_args(p_compare, kissfft_flag=True, save_flag=True)
     p_compare.set_defaults(func=cmd_compare)
 
     p_error = subparsers.add_parser("error",
@@ -1202,7 +1240,7 @@ def main():
 
     p_both = subparsers.add_parser("both",
                                    help="Run ML metrics and regression-style error metrics")
-    add_common_args(p_both, fxp_flag=True)
+    add_common_args(p_both, fxp_flag=True, kissfft_flag=True, save_flag=True)
     p_both.add_argument("--ml_mode", choices=["compare", "run"], default="compare",
                         help="ML phase mode for 'both' command (default: compare)")
     p_both.set_defaults(func=cmd_both)

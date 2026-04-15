@@ -22,6 +22,9 @@ C_application/test/kissfft_fxp_impulse.c
 C_application/test/kissfft_fxp_verify.c
 C_application/kiss_fftr/gen_twiddles_q15.py
 C_application/kiss_fftr/twiddles_win08_fs8000_q15.h
+C_application/kiss_fftr/twiddles_win08_fs8000_q31.h
+C_application/kiss_fftr/twiddle_precision_cases.csv
+C_application/kiss_fftr/twiddle_precision_summary.csv
 
 # Range/precision/accuracy analysis outputs (generated, not source)
 C_application/range_analysis/precision_analysis.csv
@@ -54,6 +57,9 @@ C_application/OVERLEAF.md
 
 # FxP-Port test artifacts
 C_application/test/
+!C_application/test/
+C_application/test/*
+!C_application/test/kissfft_twiddle_harness.c
 
 # Local dataset
 datasets/

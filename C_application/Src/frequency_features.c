@@ -14,6 +14,7 @@
 
 #include <kiss_fftr.h>
 #include <range_analysis.h>
+#include <kissfft_bridge.h>
 
 
 /*
@@ -60,14 +61,23 @@ void compute_rfft(const float *sig, int16_t len, int16_t fs, float *mags, float 
 void _rfft(const float *sig, int16_t len, float *real, float *imag){
 
     kiss_fftr_cfg cfg = kiss_fftr_alloc(len, 0, 0, 0);
-    kiss_fft_cpx *cx_out = (kiss_fft_cpx *) malloc(len * sizeof(kiss_fft_cpx));
+    int16_t fft_size = (len / 2) + 1;
+    kiss_fft_cpx *cx_out = (kiss_fft_cpx *) malloc((size_t)fft_size * sizeof(kiss_fft_cpx));
 
+#ifdef FIXED_POINT
+    kiss_fft_scalar *sig_q = (kiss_fft_scalar *)malloc((size_t)len * sizeof(kiss_fft_scalar));
+    float signal_scale = 1.0f;
+    kissfft_bridge_convert_input(sig, len, sig_q, &signal_scale);
+    kiss_fftr(cfg, sig_q, cx_out);
+    kissfft_bridge_spectrum_to_float(cx_out, len, signal_scale, real, imag);
+    free(sig_q);
+#else
     kiss_fftr(cfg, sig, cx_out);
-
-    for(int16_t i=0; i<len; i++){
+    for(int16_t i=0; i<fft_size; i++){
         real[i] = cx_out[i].r;
         imag[i] = cx_out[i].i;
     }
+#endif
 
     free(cfg);
     free(cx_out);
