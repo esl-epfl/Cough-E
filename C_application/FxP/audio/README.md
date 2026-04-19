@@ -1,11 +1,24 @@
-# Audio FxP Module (Planned)
+# Audio FxP Module
 
-This directory is intentionally minimal for now.
+This directory contains audio-domain fixed-point code only. Shared arithmetic and
+type primitives remain in `FxP/core/`.
 
-When audio fixed-point porting starts, keep only audio-domain adapters here:
+Current contents:
 
-- FFT/scaling adapters around KissFFT
-- periodogram and mel scaling glue
-- audio-domain kernel wrappers
+- `audio_fft_bridge.{h,c}`:
+  - float<->FxP bridge utilities for FFT-domain arrays
+  - Q-format conversions for magnitudes/frequencies/sum
+- `audio_fft_kernels.{h,c}`:
+  - modular fixed-point kernels for:
+    - spectral rolloff
+    - spectral centroid
+    - spectral spread
+    - spectral kurtosis
+- `audio_fft_block.{h,c}`:
+  - high-level mixed-precision entry point used by `fft_based_features()`
+  - runs the fixed-point kernels and writes feature outputs in float format
 
-Generic math/types/converters should remain in `FxP/core/`.
+Planned extensions:
+
+- periodogram-domain FxP kernels
+- mel-spectrogram-domain FxP kernels

@@ -5,7 +5,7 @@ BUILD_DIR 	= 	build
 PYTHON      =   python3
 .DEFAULT_GOAL = all
 
-SRC_DIRS 	= 	Src kiss_fftr FxP/imu
+SRC_DIRS 	= 	Src kiss_fftr FxP/imu FxP/audio
 SRC 		= 	$(foreach c, $(SRC_DIRS), $(wildcard $c/*.c))
 
 INC_DIRS 	= 	Inc FxP ./ kiss_fftr range_analysis

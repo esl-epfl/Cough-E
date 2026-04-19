@@ -60,6 +60,7 @@ C_application/test/
 !C_application/test/
 C_application/test/*
 !C_application/test/kissfft_twiddle_harness.c
+!C_application/test/fxp_audio_fft_regression.c
 
 # Local dataset
 datasets/

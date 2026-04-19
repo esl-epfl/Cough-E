@@ -13,6 +13,9 @@
 #ifdef FXP_MODE
 #include <core/fxp_convert.h>
 #endif
+#if defined(FXP_MODE) && defined(FIXED_POINT)
+#include <audio/audio_fft_block.h>
+#endif
 #include <range_analysis.h>
 
 #ifdef RANGE_ANALYSIS
@@ -223,6 +226,15 @@ void fft_based_features(const int8_t *features_selector, const float *sig, int16
                 }
             }
         }
+
+#if defined(FXP_MODE) && defined(FIXED_POINT)
+        /*
+         * Hybrid audio FFT path:
+         * - run selected FFT-domain kernels in fixed-point arithmetic
+         * - keep non-ported kernels on float for mixed-precision validation
+         */
+        fxp_audio_fft_features_hybrid(features_selector, magnitudes, fft_size, fs, len, feats);
+#endif
 
         free(magnitudes);
         free(frequencies);
