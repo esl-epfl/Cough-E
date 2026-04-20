@@ -13,6 +13,7 @@ typedef uint16_t uq5_11_t;
 typedef uint16_t uq2_14_t;
 typedef uint16_t uq10_6_t;
 typedef uint16_t uq11_5_t;
+typedef uint16_t uq0_16_t;
 
 // 32-bit Q-format aliases.
 typedef int32_t  q12_20_t;
@@ -27,6 +28,9 @@ typedef uint32_t uq0_20_t;
 typedef uint32_t uq9_22_t;
 typedef uint32_t uq18_12_t;
 typedef uint32_t uq7_15_t;
+typedef uint32_t uq18_11_t;
+typedef uint32_t uq18_14_t;
+typedef uint32_t uq24_8_t;
 
 // 64-bit Q-format aliases.
 typedef int64_t  q34_30_t;
@@ -57,3 +61,7 @@ _Static_assert(sizeof(uq9_22_t) * 8 == FXP_BITS_AUDIO_FFT_NORM_DEV2, "uq9_22_t w
 _Static_assert(sizeof(uq18_12_t) * 8 == FXP_BITS_AUDIO_FFT_NORM_DEV4, "uq18_12_t width mismatch");
 _Static_assert(sizeof(uq30_32_t) * 8 == FXP_BITS_AUDIO_FFT_KURT_WEIGHT, "uq30_32_t width mismatch");
 _Static_assert(sizeof(uq7_15_t) * 8 == FXP_BITS_AUDIO_FFT_KURTOSIS, "uq7_15_t width mismatch");
+_Static_assert(sizeof(uq18_14_t) * 8 == FXP_BITS_AUDIO_PSD_PROXY, "uq18_14_t width mismatch");
+_Static_assert(sizeof(uq24_8_t) * 8 == FXP_BITS_AUDIO_PSD_INTEGRAL, "uq24_8_t width mismatch");
+_Static_assert(sizeof(uq0_16_t) * 8 == FXP_BITS_AUDIO_PSD_FLATNESS, "uq0_16_t width mismatch");
+_Static_assert(sizeof(uq0_16_t) * 8 == FXP_BITS_AUDIO_PSD_BANDPOWER, "uq0_16_t width mismatch");

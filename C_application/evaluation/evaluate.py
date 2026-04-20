@@ -16,8 +16,11 @@ Usage:
     python C_application/evaluation/evaluate.py aggregate --csv C_application/evaluation/results.csv  # re-aggregate from CSV
     python C_application/evaluation/evaluate.py error                               # IMU regression-style error metrics
     python C_application/evaluation/evaluate.py error-audio-fft --kissfft-fixed 16 # full-dataset audio FFT kernel regression
+    python C_application/evaluation/evaluate.py error-audio-psd --kissfft-fixed 16 # full-dataset audio periodogram kernel regression
+    python C_application/evaluation/evaluate.py error-audio-mel --kissfft-fixed 16 # full-dataset audio mel kernel regression
     python C_application/evaluation/evaluate.py error-audio-fft --audio-fft-mode isolated --kissfft-fixed 16
-    python C_application/evaluation/evaluate.py error-all --kissfft-fixed 32        # total regression suite (IMU + audio FFT)
+    python C_application/evaluation/evaluate.py error-audio-psd --audio-psd-mode isolated --kissfft-fixed 16
+    python C_application/evaluation/evaluate.py error-all --kissfft-fixed 32        # total regression suite (IMU + audio FFT + audio PSD + audio MEL)
     python C_application/evaluation/evaluate.py both                                # ML metrics + regression-style error metrics
 """
 
@@ -96,6 +99,8 @@ ERROR_KERNEL_CSV_FIELDNAMES = [
 
 REGRESSION_HARNESS = os.path.join(C_APP_DIR, "test", "fxp_model_regression.c")
 AUDIO_FFT_REGRESSION_HARNESS = os.path.join(C_APP_DIR, "test", "fxp_audio_fft_regression.c")
+AUDIO_PSD_REGRESSION_HARNESS = os.path.join(C_APP_DIR, "test", "fxp_audio_periodogram_regression.c")
+AUDIO_MEL_REGRESSION_HARNESS = os.path.join(C_APP_DIR, "test", "fxp_audio_mel_regression.c")
 REGRESSION_SRCS = (
     sorted(glob.glob(os.path.join(C_APP_DIR, "Src", "*.c"))) +
     sorted(glob.glob(os.path.join(C_APP_DIR, "kiss_fftr", "*.c"))) +
@@ -552,6 +557,64 @@ def compile_audio_fft_regression_harness(out_bin, fixed_point=16, audio_relpath=
     return True
 
 
+def compile_audio_psd_regression_harness(out_bin, fixed_point=16, audio_relpath=None):
+    """
+    Compile fxp_audio_periodogram_regression.c for a selected KissFFT fixed-point precision.
+    If audio_relpath is provided, inject AUDIO_HEADER for per-recording dataset mode.
+    """
+    header_flags = []
+    if audio_relpath is not None:
+        audio_header = f"input_data/{audio_relpath}"
+        header_flags = [f"-DAUDIO_HEADER=<{audio_header}>"]
+
+    cmd = (
+        ["gcc"] +
+        REGRESSION_CFLAGS +
+        [f"-DFIXED_POINT={fixed_point}"] +
+        header_flags +
+        ["-o", out_bin, AUDIO_PSD_REGRESSION_HARNESS] +
+        REGRESSION_SRCS +
+        REGRESSION_INC +
+        ["-lm"]
+    )
+    result = subprocess.run(cmd, capture_output=True, text=True)
+    if result.returncode != 0:
+        print(f"  [COMPILE ERROR] audio PSD harness (FIXED_POINT={fixed_point})")
+        if result.stderr:
+            print(result.stderr[:1200])
+        return False
+    return True
+
+
+def compile_audio_mel_regression_harness(out_bin, fixed_point=16, audio_relpath=None):
+    """
+    Compile fxp_audio_mel_regression.c for a selected KissFFT fixed-point precision.
+    If audio_relpath is provided, inject AUDIO_HEADER for per-recording dataset mode.
+    """
+    header_flags = []
+    if audio_relpath is not None:
+        audio_header = f"input_data/{audio_relpath}"
+        header_flags = [f"-DAUDIO_HEADER=<{audio_header}>"]
+
+    cmd = (
+        ["gcc"] +
+        REGRESSION_CFLAGS +
+        [f"-DFIXED_POINT={fixed_point}"] +
+        header_flags +
+        ["-o", out_bin, AUDIO_MEL_REGRESSION_HARNESS] +
+        REGRESSION_SRCS +
+        REGRESSION_INC +
+        ["-lm"]
+    )
+    result = subprocess.run(cmd, capture_output=True, text=True)
+    if result.returncode != 0:
+        print(f"  [COMPILE ERROR] audio MEL harness (FIXED_POINT={fixed_point})")
+        if result.stderr:
+            print(result.stderr[:1200])
+        return False
+    return True
+
+
 def parse_audio_fft_regression_metrics(output):
     """
     Parse machine-readable lines emitted by fxp_audio_fft_regression.c.
@@ -615,6 +678,132 @@ def parse_audio_fft_regression_metrics(output):
         return None
 
 
+def parse_audio_psd_regression_metrics(output):
+    """
+    Parse machine-readable lines emitted by fxp_audio_periodogram_regression.c.
+    """
+    parsed = {}
+    kernel_rows = []
+    for line in output.splitlines():
+        line = line.strip()
+        if line.startswith("AUDIO_PSD_REG_KERNEL_CONT"):
+            parts = line.split(",")
+            kv = {}
+            for part in parts[1:]:
+                if "=" not in part:
+                    continue
+                key, val = part.split("=", 1)
+                kv[key.strip()] = val.strip()
+            kernel_rows.append(kv)
+            continue
+
+        if not line.startswith("AUDIO_PSD_REG_METRICS_"):
+            continue
+
+        parts = line.split(",")
+        tag = parts[0]
+        kv = {}
+        for part in parts[1:]:
+            if "=" not in part:
+                continue
+            key, val = part.split("=", 1)
+            kv[key.strip()] = val.strip()
+        parsed[tag] = kv
+
+    cont = parsed.get("AUDIO_PSD_REG_METRICS_CONT")
+    meta = parsed.get("AUDIO_PSD_REG_METRICS_META")
+    if cont is None or meta is None:
+        return None
+
+    try:
+        out = {
+            "cont_n": int(cont["n"]),
+            "cont_sq_err": float(cont["sum_sq_err"]),
+            "cont_sq_float": float(cont["sum_sq_float"]),
+            "cont_max_abs": float(cont["max_abs"]),
+            "checks": int(meta["checks"]),
+            "global_max_abs": float(meta["global_max_abs"]),
+        }
+        typed_kernels = []
+        for k in kernel_rows:
+            typed_kernels.append({
+                "metric_type": "continuous",
+                "signal": "AUDIO_PSD",
+                "feature": k["feature"],
+                "n": int(k["n"]),
+                "sum_sq_err": float(k["sum_sq_err"]),
+                "sum_sq_float": float(k["sum_sq_float"]),
+                "max_abs": float(k["max_abs"]),
+            })
+        out["kernel_rows"] = typed_kernels
+        return out
+    except (KeyError, ValueError):
+        return None
+
+
+def parse_audio_mel_regression_metrics(output):
+    """
+    Parse machine-readable lines emitted by fxp_audio_mel_regression.c.
+    """
+    parsed = {}
+    kernel_rows = []
+    for line in output.splitlines():
+        line = line.strip()
+        if line.startswith("AUDIO_MEL_REG_KERNEL_CONT"):
+            parts = line.split(",")
+            kv = {}
+            for part in parts[1:]:
+                if "=" not in part:
+                    continue
+                key, val = part.split("=", 1)
+                kv[key.strip()] = val.strip()
+            kernel_rows.append(kv)
+            continue
+
+        if not line.startswith("AUDIO_MEL_REG_METRICS_"):
+            continue
+
+        parts = line.split(",")
+        tag = parts[0]
+        kv = {}
+        for part in parts[1:]:
+            if "=" not in part:
+                continue
+            key, val = part.split("=", 1)
+            kv[key.strip()] = val.strip()
+        parsed[tag] = kv
+
+    cont = parsed.get("AUDIO_MEL_REG_METRICS_CONT")
+    meta = parsed.get("AUDIO_MEL_REG_METRICS_META")
+    if cont is None or meta is None:
+        return None
+
+    try:
+        out = {
+            "cont_n": int(cont["n"]),
+            "cont_sq_err": float(cont["sum_sq_err"]),
+            "cont_sq_float": float(cont["sum_sq_float"]),
+            "cont_max_abs": float(cont["max_abs"]),
+            "checks": int(meta["checks"]),
+            "global_max_abs": float(meta["global_max_abs"]),
+        }
+        typed_kernels = []
+        for k in kernel_rows:
+            typed_kernels.append({
+                "metric_type": "continuous",
+                "signal": "AUDIO_MEL",
+                "feature": k["feature"],
+                "n": int(k["n"]),
+                "sum_sq_err": float(k["sum_sq_err"]),
+                "sum_sq_float": float(k["sum_sq_float"]),
+                "max_abs": float(k["max_abs"]),
+            })
+        out["kernel_rows"] = typed_kernels
+        return out
+    except (KeyError, ValueError):
+        return None
+
+
 def run_audio_fft_regression_harness(bin_path):
     """Run compiled FFT regression harness and parse machine-readable metrics."""
     try:
@@ -624,6 +813,28 @@ def run_audio_fft_regression_harness(bin_path):
     if result.returncode != 0:
         return None
     return parse_audio_fft_regression_metrics(result.stdout)
+
+
+def run_audio_psd_regression_harness(bin_path):
+    """Run compiled periodogram regression harness and parse machine-readable metrics."""
+    try:
+        result = subprocess.run([bin_path], capture_output=True, text=True, timeout=120)
+    except subprocess.TimeoutExpired:
+        return None
+    if result.returncode != 0:
+        return None
+    return parse_audio_psd_regression_metrics(result.stdout)
+
+
+def run_audio_mel_regression_harness(bin_path):
+    """Run compiled mel regression harness and parse machine-readable metrics."""
+    try:
+        result = subprocess.run([bin_path], capture_output=True, text=True, timeout=120)
+    except subprocess.TimeoutExpired:
+        return None
+    if result.returncode != 0:
+        return None
+    return parse_audio_mel_regression_metrics(result.stdout)
 
 
 def _enrich_error_row(row):
@@ -776,6 +987,129 @@ def evaluate_audio_fft_error_metrics_dataset(dataset_path, subjects=None,
     return rows
 
 
+def evaluate_audio_psd_error_metrics_isolated(fixed_point=16):
+    """
+    Run audio periodogram fixed-point regression harness in isolated synthetic-signal mode.
+    """
+    with tempfile.TemporaryDirectory() as tmpdir:
+        bin_path = os.path.join(tmpdir, "fxp_audio_periodogram_regression_eval")
+        if not compile_audio_psd_regression_harness(bin_path, fixed_point=fixed_point):
+            return None
+        return run_audio_psd_regression_harness(bin_path)
+
+
+def evaluate_audio_psd_error_metrics_dataset(dataset_path, subjects=None,
+                                             trials=TRIALS, movements=MOVEMENTS,
+                                             noises=NOISES, sounds=SOUNDS,
+                                             fixed_point=16):
+    """
+    Run audio periodogram regression metrics across selected dataset recordings.
+    """
+    rows = []
+    current_subject = None
+
+    with tempfile.TemporaryDirectory() as tmpdir:
+        bin_path = os.path.join(tmpdir, "fxp_audio_periodogram_regression_eval")
+
+        for subj_id, trial, mov, noise, sound in iter_recordings(
+            dataset_path, subjects=subjects, trials=trials,
+            movements=movements, noises=noises, sounds=sounds,
+        ):
+            if subj_id != current_subject:
+                current_subject = subj_id
+                print(f"\n=== Subject {subj_id} (audio PSD error metrics) ===")
+
+            rec_id = f"t{trial}_{mov}_{noise}_{sound}"
+            transformed = transform_recording(
+                subj_id, trial, mov, noise, sound, dataset_path, INPUT_DATA_DIR
+            )
+            if transformed is None:
+                continue
+
+            suffix, audio_relpath, _, _ = transformed
+            if not compile_audio_psd_regression_harness(
+                bin_path, fixed_point=fixed_point, audio_relpath=audio_relpath
+            ):
+                print(f"  {rec_id}: SKIP (compile error)")
+                continue
+
+            metrics = run_audio_psd_regression_harness(bin_path)
+            if metrics is None:
+                print(f"  {rec_id}: SKIP (runtime/parse error)")
+                continue
+
+            row = {
+                "subject": subj_id,
+                "trial": trial,
+                "movement": mov,
+                "noise": noise,
+                "sound": sound,
+                "recording": suffix,
+                **metrics,
+            }
+            _enrich_audio_error_row(row)
+            rows.append(row)
+            print(f"  {rec_id}: checks={row['checks']}")
+
+    return rows
+
+
+def evaluate_audio_mel_error_metrics_dataset(dataset_path, subjects=None,
+                                             trials=TRIALS, movements=MOVEMENTS,
+                                             noises=NOISES, sounds=SOUNDS,
+                                             fixed_point=16):
+    """
+    Run audio mel regression metrics across selected dataset recordings.
+    """
+    rows = []
+    current_subject = None
+
+    with tempfile.TemporaryDirectory() as tmpdir:
+        bin_path = os.path.join(tmpdir, "fxp_audio_mel_regression_eval")
+
+        for subj_id, trial, mov, noise, sound in iter_recordings(
+            dataset_path, subjects=subjects, trials=trials,
+            movements=movements, noises=noises, sounds=sounds,
+        ):
+            if subj_id != current_subject:
+                current_subject = subj_id
+                print(f"\n=== Subject {subj_id} (audio MEL error metrics) ===")
+
+            rec_id = f"t{trial}_{mov}_{noise}_{sound}"
+            transformed = transform_recording(
+                subj_id, trial, mov, noise, sound, dataset_path, INPUT_DATA_DIR
+            )
+            if transformed is None:
+                continue
+
+            suffix, audio_relpath, _, _ = transformed
+            if not compile_audio_mel_regression_harness(
+                bin_path, fixed_point=fixed_point, audio_relpath=audio_relpath
+            ):
+                print(f"  {rec_id}: SKIP (compile error)")
+                continue
+
+            metrics = run_audio_mel_regression_harness(bin_path)
+            if metrics is None:
+                print(f"  {rec_id}: SKIP (runtime/parse error)")
+                continue
+
+            row = {
+                "subject": subj_id,
+                "trial": trial,
+                "movement": mov,
+                "noise": noise,
+                "sound": sound,
+                "recording": suffix,
+                **metrics,
+            }
+            _enrich_audio_error_row(row)
+            rows.append(row)
+            print(f"  {rec_id}: checks={row['checks']}")
+
+    return rows
+
+
 def compute_audio_error_aggregate(rows):
     """Aggregate audio FFT regression-style continuous error metrics across recordings."""
     cont_n = sum(r["cont_n"] for r in rows)
@@ -816,6 +1150,58 @@ def print_audio_fft_error_results(rows, aggregate, fixed_point):
     """Print per-subject and overall audio FFT regression-style error metrics."""
     print("\n" + "=" * 70)
     print(f"AUDIO FFT REGRESSION-STYLE ERROR METRICS (FxP vs FLOAT, FIXED_POINT={fixed_point})")
+    print("=" * 70)
+
+    per_subject = compute_audio_error_per_subject(rows)
+    for subj_id in sorted(per_subject):
+        a = per_subject[subj_id]
+        print(f"\nSubject {subj_id}:")
+        print(f"  CONT: RMSE={a['cont_rmse']:.6g}  RelRMSE={a['cont_rel_rmse_pct']:.4f}%  MaxAbs={a['cont_max_abs']:.6g}")
+
+    print(f"\n{'=' * 70}")
+    print(f"OVERALL ({aggregate['total_recordings']} recordings)")
+    print(f"{'=' * 70}")
+    print(f"  checks            = {aggregate['checks']}")
+    print(f"  global_max_abs    = {aggregate['global_max_abs']:.6g}")
+    print(f"  CONT n            = {aggregate['cont_n']}")
+    print(f"  CONT RMSE         = {aggregate['cont_rmse']:.6g}")
+    print(f"  CONT RelRMSE      = {aggregate['cont_rel_rmse_pct']:.4f}%")
+    print(f"  CONT MaxAbs       = {aggregate['cont_max_abs']:.6g}")
+    print("=" * 70)
+
+    return per_subject
+
+
+def print_audio_psd_error_results(rows, aggregate, fixed_point):
+    """Print per-subject and overall audio periodogram regression-style error metrics."""
+    print("\n" + "=" * 70)
+    print(f"AUDIO PERIODOGRAM REGRESSION-STYLE ERROR METRICS (FxP vs FLOAT, FIXED_POINT={fixed_point})")
+    print("=" * 70)
+
+    per_subject = compute_audio_error_per_subject(rows)
+    for subj_id in sorted(per_subject):
+        a = per_subject[subj_id]
+        print(f"\nSubject {subj_id}:")
+        print(f"  CONT: RMSE={a['cont_rmse']:.6g}  RelRMSE={a['cont_rel_rmse_pct']:.4f}%  MaxAbs={a['cont_max_abs']:.6g}")
+
+    print(f"\n{'=' * 70}")
+    print(f"OVERALL ({aggregate['total_recordings']} recordings)")
+    print(f"{'=' * 70}")
+    print(f"  checks            = {aggregate['checks']}")
+    print(f"  global_max_abs    = {aggregate['global_max_abs']:.6g}")
+    print(f"  CONT n            = {aggregate['cont_n']}")
+    print(f"  CONT RMSE         = {aggregate['cont_rmse']:.6g}")
+    print(f"  CONT RelRMSE      = {aggregate['cont_rel_rmse_pct']:.4f}%")
+    print(f"  CONT MaxAbs       = {aggregate['cont_max_abs']:.6g}")
+    print("=" * 70)
+
+    return per_subject
+
+
+def print_audio_mel_error_results(rows, aggregate, fixed_point):
+    """Print per-subject and overall audio mel regression-style error metrics."""
+    print("\n" + "=" * 70)
+    print(f"AUDIO MEL REGRESSION-STYLE ERROR METRICS (FxP vs FLOAT, FIXED_POINT={fixed_point})")
     print("=" * 70)
 
     per_subject = compute_audio_error_per_subject(rows)
@@ -1254,6 +1640,9 @@ def cmd_run(args):
     if getattr(args, "fxp", False):
         compile_flags.append("-DFXP_MODE")
     kissfft_fixed = getattr(args, "kissfft_fixed", None)
+    if getattr(args, "fxp", False) and kissfft_fixed is None:
+        kissfft_fixed = 32
+        print("`--fxp` enabled without `--kissfft-fixed`; defaulting to `--kissfft-fixed 32` for FxP audio blocks.")
     if kissfft_fixed is not None:
         compile_flags.append(f"-DFIXED_POINT={kissfft_fixed}")
 
@@ -1321,6 +1710,9 @@ def cmd_compare(args):
     print("\n=== FxP evaluation ===")
     fxp_flags = ["-DFXP_MODE"]
     kissfft_fixed = getattr(args, "kissfft_fixed", None)
+    if kissfft_fixed is None:
+        kissfft_fixed = 32
+        print("No `--kissfft-fixed` provided; defaulting FxP comparison run to `--kissfft-fixed 32`.")
     if kissfft_fixed is not None:
         fxp_flags.append(f"-DFIXED_POINT={kissfft_fixed}")
     fxp_flags = " ".join(fxp_flags)
@@ -1448,12 +1840,79 @@ def cmd_error_audio_fft(args):
     print_kernel_summary(kernel_rows)
 
 
+def cmd_error_audio_psd(args):
+    """Run audio periodogram regression-style error metrics."""
+    fixed_point = getattr(args, "kissfft_fixed", None)
+    if fixed_point is None:
+        fixed_point = 16
+    mode = getattr(args, "audio_psd_mode", "dataset")
+
+    if mode == "isolated":
+        metrics = evaluate_audio_psd_error_metrics_isolated(fixed_point=fixed_point)
+        if metrics is None:
+            print("Audio periodogram regression harness failed (compile/runtime).")
+            sys.exit(1)
+
+        rows = [{
+            "subject": "isolated",
+            "trial": "0",
+            "movement": "isolated",
+            "noise": "isolated",
+            "sound": "isolated",
+            "recording": "isolated_suite",
+            **metrics,
+        }]
+        _enrich_audio_error_row(rows[0])
+    else:
+        rows = evaluate_audio_psd_error_metrics_dataset(
+            args.dataset_path,
+            subjects=args.subjects,
+            sounds=args.sounds,
+            noises=args.noises,
+            fixed_point=fixed_point,
+        )
+        if not rows:
+            print("No recordings processed for audio PSD error metrics. Check dataset path and subject IDs.")
+            sys.exit(1)
+
+    aggregate = compute_audio_error_aggregate(rows)
+    print_audio_psd_error_results(rows, aggregate, fixed_point=fixed_point)
+    kernel_rows = compute_kernel_aggregate(rows)
+    print_kernel_summary(kernel_rows)
+
+
+def cmd_error_audio_mel(args):
+    """Run audio mel regression-style error metrics."""
+    fixed_point = getattr(args, "kissfft_fixed", None)
+    if fixed_point is None:
+        fixed_point = 16
+    rows = evaluate_audio_mel_error_metrics_dataset(
+        args.dataset_path,
+        subjects=args.subjects,
+        sounds=args.sounds,
+        noises=args.noises,
+        fixed_point=fixed_point,
+    )
+    if not rows:
+        print("No recordings processed for audio MEL error metrics. Check dataset path and subject IDs.")
+        sys.exit(1)
+
+    aggregate = compute_audio_error_aggregate(rows)
+    print_audio_mel_error_results(rows, aggregate, fixed_point=fixed_point)
+    kernel_rows = compute_kernel_aggregate(rows)
+    print_kernel_summary(kernel_rows)
+
+
 def cmd_error_all(args):
-    """Run both IMU regression metrics and audio FFT kernel regression metrics."""
+    """Run IMU regression metrics plus audio FFT/audio periodogram/audio mel kernel regression metrics."""
     print("=== IMU regression-style error metrics ===")
     cmd_error(args)
     print("\n=== Audio FFT kernel regression metrics ===")
     cmd_error_audio_fft(args)
+    print("\n=== Audio periodogram kernel regression metrics ===")
+    cmd_error_audio_psd(args)
+    print("\n=== Audio MEL kernel regression metrics ===")
+    cmd_error_audio_mel(args)
 
 
 def cmd_both(args):
@@ -1474,6 +1933,12 @@ def cmd_both(args):
     if getattr(args, "include_audio_fft", False):
         print("\n=== Audio FFT kernel regression metrics ===")
         cmd_error_audio_fft(args)
+    if getattr(args, "include_audio_psd", False):
+        print("\n=== Audio periodogram kernel regression metrics ===")
+        cmd_error_audio_psd(args)
+    if getattr(args, "include_audio_mel", False):
+        print("\n=== Audio MEL kernel regression metrics ===")
+        cmd_error_audio_mel(args)
 
 
 def main():
@@ -1533,6 +1998,27 @@ def main():
             ),
         )
 
+    def add_audio_psd_args(p):
+        p.add_argument(
+            "--audio-psd-mode",
+            choices=["dataset", "isolated"],
+            default="dataset",
+            help=(
+                "Run audio periodogram regression on full dataset recordings (dataset) "
+                "or on a short synthetic signal suite (isolated)."
+            ),
+        )
+        p.add_argument(
+            "--kissfft-fixed",
+            type=int,
+            choices=[16, 32],
+            default=16,
+            help=(
+                "KissFFT fixed-point precision for the audio periodogram regression harness "
+                "(default: 16)."
+            ),
+        )
+
     p_transform = subparsers.add_parser("transform", help="Generate C headers from dataset")
     add_common_args(p_transform)
     p_transform.set_defaults(func=cmd_transform)
@@ -1567,9 +2053,24 @@ def main():
     add_audio_fft_args(p_error_audio)
     p_error_audio.set_defaults(func=cmd_error_audio_fft)
 
+    p_error_audio_psd = subparsers.add_parser(
+        "error-audio-psd",
+        help="Run audio periodogram regression metrics (full dataset by default)",
+    )
+    add_common_args(p_error_audio_psd)
+    add_audio_psd_args(p_error_audio_psd)
+    p_error_audio_psd.set_defaults(func=cmd_error_audio_psd)
+
+    p_error_audio_mel = subparsers.add_parser(
+        "error-audio-mel",
+        help="Run audio mel regression metrics (full dataset by default)",
+    )
+    add_common_args(p_error_audio_mel, kissfft_flag=True)
+    p_error_audio_mel.set_defaults(func=cmd_error_audio_mel)
+
     p_error_all = subparsers.add_parser(
         "error-all",
-        help="Run both IMU regression metrics and audio FFT kernel regression metrics",
+        help="Run IMU, audio FFT, audio periodogram, and audio mel regression metrics",
     )
     add_common_args(p_error_all, kissfft_flag=True)
     p_error_all.set_defaults(func=cmd_error_all)
@@ -1581,6 +2082,10 @@ def main():
                         help="ML phase mode for 'both' command (default: compare)")
     p_both.add_argument("--include-audio-fft", action="store_true", default=False,
                         help="Also run isolated audio FFT kernel regression after IMU error metrics.")
+    p_both.add_argument("--include-audio-psd", action="store_true", default=False,
+                        help="Also run isolated audio periodogram kernel regression after IMU error metrics.")
+    p_both.add_argument("--include-audio-mel", action="store_true", default=False,
+                        help="Also run audio mel kernel regression after IMU error metrics.")
     p_both.set_defaults(func=cmd_both)
 
     args = parser.parse_args()

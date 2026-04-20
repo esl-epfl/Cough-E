@@ -7,12 +7,10 @@
 #include <frequency_features.h>
 
 #if defined(FXP_MODE) && defined(FIXED_POINT)
-#include <audio/audio_fft_block.h>
+#include <audio/audio_mel_block.h>
 #endif
 
-#define FS_AUDIO 8000
-#define NFFT 6400
-#define FFT_LEN ((NFFT / 2) + 1)
+#define SIG_LEN 6400
 #define N_SIGNALS 5
 #define PI_F 3.14159265358979323846f
 
@@ -24,18 +22,18 @@ typedef struct {
     float max_abs;
 } metric_acc_t;
 
-static const int k_feat_idx[4] = {
-    SPECTRAL_ROLLOFF,
-    SPECTRAL_CENTROID,
-    SPECTRAL_SPREAD,
-    SPECTRAL_KURTOSIS,
+static const int k_feat_base[4] = {
+    MEL_FREQUENCY_CEPSTRAL_COEFFICIENT,
+    MEL_FREQUENCY_CEPSTRAL_COEFFICIENT + N_MFCC,
+    MEL_FREQUENCY_CEPSTRAL_COEFFICIENT + (2 * N_MFCC),
+    MEL_FREQUENCY_CEPSTRAL_COEFFICIENT + (3 * N_MFCC),
 };
 
 static const char *k_feat_name[4] = {
-    "SPECTRAL_ROLLOFF",
-    "SPECTRAL_CENTROID",
-    "SPECTRAL_SPREAD",
-    "SPECTRAL_KURTOSIS",
+    "MEL_MEAN",
+    "MEL_STD",
+    "MEL_MAX",
+    "MEL_ENTROPY",
 };
 
 static float _rand_uniform(unsigned *state)
@@ -46,23 +44,25 @@ static float _rand_uniform(unsigned *state)
 
 static void build_signal(int signal_id, float *x)
 {
-    unsigned rng = 0xA5A5A5u + (unsigned)signal_id * 977u;
-    for (int i = 0; i < NFFT; i++) {
-        float t = (float)i / (float)NFFT;
+    unsigned rng = 0xC3D2A1u + (unsigned)signal_id * 613u;
+    for (int i = 0; i < SIG_LEN; i++) {
+        float t = (float)i / (float)SIG_LEN;
         switch (signal_id) {
             case 0:
-                x[i] = (i == 0) ? 0.85f : 0.0f; /* impulse */
+                x[i] = 0.85f * sinf(2.0f * PI_F * 11.0f * t);
                 break;
             case 1:
-                x[i] = 0.85f * sinf(2.0f * PI_F * 7.0f * t);
+                x[i] = 0.45f * sinf(2.0f * PI_F * 4.0f * t)
+                     + 0.28f * sinf(2.0f * PI_F * 29.0f * t + 0.25f);
                 break;
-            case 2:
-                x[i] = 0.55f * sinf(2.0f * PI_F * 5.0f * t)
-                     + 0.30f * sinf(2.0f * PI_F * 37.0f * t + 0.3f);
+            case 2: {
+                float f = 5.0f + (140.0f - 5.0f) * t;
+                x[i] = 0.75f * sinf(2.0f * PI_F * f * t);
                 break;
+            }
             case 3: {
-                float f = 3.0f + (120.0f - 3.0f) * t;
-                x[i] = 0.85f * sinf(2.0f * PI_F * f * t);
+                float env = (t < 0.5f) ? (2.0f * t) : (2.0f * (1.0f - t));
+                x[i] = env * (0.85f * sinf(2.0f * PI_F * 18.0f * t));
                 break;
             }
             default:
@@ -95,12 +95,68 @@ static void _print_machine_rows(metric_acc_t *rows, int checks, float global_max
         if (rows[i].max_abs > max_total) max_total = rows[i].max_abs;
     }
 
-    printf("AUDIO_REG_METRICS_CONT,n=%d,sum_sq_err=%.17g,sum_sq_float=%.17g,max_abs=%.9g\n",
+    printf("AUDIO_MEL_REG_METRICS_CONT,n=%d,sum_sq_err=%.17g,sum_sq_float=%.17g,max_abs=%.9g\n",
            n_total, sum_sq_err_total, sum_sq_float_total, max_total);
-    printf("AUDIO_REG_METRICS_META,checks=%d,global_max_abs=%.9g\n", checks, global_max_abs);
+    printf("AUDIO_MEL_REG_METRICS_META,checks=%d,global_max_abs=%.9g\n", checks, global_max_abs);
     for (int i = 0; i < 4; i++) {
-        printf("AUDIO_REG_KERNEL_CONT,feature=%s,n=%d,sum_sq_err=%.17g,sum_sq_float=%.17g,max_abs=%.9g\n",
+        printf("AUDIO_MEL_REG_KERNEL_CONT,feature=%s,n=%d,sum_sq_err=%.17g,sum_sq_float=%.17g,max_abs=%.9g\n",
                rows[i].name, rows[i].n, rows[i].sum_sq_err, rows[i].sum_sq_float, rows[i].max_abs);
+    }
+}
+
+static void _build_selector(int8_t *selector)
+{
+    memset(selector, 0, Number_AUDIO_Features * sizeof(int8_t));
+    for (int i = 0; i < N_MFCC; i++) {
+        selector[MEL_FREQUENCY_CEPSTRAL_COEFFICIENT + i] = 1;
+        selector[MEL_FREQUENCY_CEPSTRAL_COEFFICIENT + N_MFCC + i] = 1;
+        selector[MEL_FREQUENCY_CEPSTRAL_COEFFICIENT + (2 * N_MFCC) + i] = 1;
+        selector[MEL_FREQUENCY_CEPSTRAL_COEFFICIENT + (3 * N_MFCC) + i] = 1;
+    }
+}
+
+static void _evaluate_signal(const float *sig, int16_t len,
+                             metric_acc_t *rows, int *checks, float *global_max_abs)
+{
+    uint8_t idx_needed[N_MFCC];
+    for (uint8_t i = 0; i < N_MFCC; i++) idx_needed[i] = i;
+
+    float ref_mean[N_MFCC];
+    float ref_std[N_MFCC];
+    float ref_max[N_MFCC];
+    float ref_entropy[N_MFCC];
+
+    get_mel_spectrogram_features(sig, len, idx_needed, N_MFCC,
+                                 ref_mean, ref_std, ref_max, ref_entropy);
+
+    int8_t selector[Number_AUDIO_Features];
+    _build_selector(selector);
+
+    float feats[Number_AUDIO_Features];
+    memset(feats, 0, sizeof(feats));
+    fxp_audio_mel_features_from_signal(selector, sig, len, feats);
+
+    for (int i = 0; i < N_MFCC; i++) {
+        const float ref_vals[4] = {
+            ref_mean[i],
+            ref_std[i],
+            ref_max[i],
+            ref_entropy[i],
+        };
+
+        for (int k = 0; k < 4; k++) {
+            float fxp_val = feats[k_feat_base[k] + i];
+            float ref_val = ref_vals[k];
+            if (!isfinite(fxp_val) || !isfinite(ref_val)) {
+                continue;
+            }
+            _acc_update(&rows[k], fxp_val, ref_val);
+            {
+                float abs_err = fabsf(fxp_val - ref_val);
+                if (abs_err > *global_max_abs) *global_max_abs = abs_err;
+            }
+            *checks += 1;
+        }
     }
 }
 
@@ -115,49 +171,20 @@ static int run_isolated_suite(void)
         rows[i].max_abs = 0.0f;
     }
 
-    float *x = (float *)malloc(NFFT * sizeof(float));
-    float *mags = (float *)malloc(FFT_LEN * sizeof(float));
-    float *freqs = (float *)malloc(FFT_LEN * sizeof(float));
-    if (!x || !mags || !freqs) {
+    float *x = (float *)malloc(SIG_LEN * sizeof(float));
+    if (!x) {
         fprintf(stderr, "Allocation failed.\n");
-        free(x);
-        free(mags);
-        free(freqs);
         return 1;
     }
-
-    int8_t selector[Number_AUDIO_Features];
-    memset(selector, 0, sizeof(selector));
-    for (int i = 0; i < 4; i++) selector[k_feat_idx[i]] = 1;
 
     float global_max_abs = 0.0f;
     int checks = 0;
     for (int s = 0; s < N_SIGNALS; s++) {
         build_signal(s, x);
-
-        float sum_mags = 0.0f;
-        compute_rfft(x, NFFT, FS_AUDIO, mags, freqs, &sum_mags);
-
-        float ref[4];
-        ref[0] = compute_rolloff(mags, freqs, FFT_LEN, sum_mags);
-        ref[1] = compute_centroid(mags, freqs, FFT_LEN, sum_mags);
-        ref[2] = compute_spread(mags, freqs, FFT_LEN, sum_mags, ref[1]);
-        ref[3] = compute_kurt(mags, freqs, FFT_LEN, sum_mags, ref[1], ref[2]);
-
-        float feats[Number_AUDIO_Features];
-        memset(feats, 0, sizeof(feats));
-        fxp_audio_fft_features_from_signal(selector, x, NFFT, FS_AUDIO, feats);
-
-        for (int i = 0; i < 4; i++) {
-            float fxp_val = feats[k_feat_idx[i]];
-            _acc_update(&rows[i], fxp_val, ref[i]);
-            float abs_err = fabsf(fxp_val - ref[i]);
-            if (abs_err > global_max_abs) global_max_abs = abs_err;
-            checks++;
-        }
+        _evaluate_signal(x, SIG_LEN, rows, &checks, &global_max_abs);
     }
 
-    printf("\nFFT Audio FxP Kernel Regression (isolated suite)\n");
+    printf("\nMel Audio FxP Kernel Regression (isolated suite)\n");
     printf("================================================\n");
     printf("%-22s %8s %14s %14s\n", "Kernel", "N", "RMSE", "RelRMSE(%)");
     printf("-----------------------------------------------------------\n");
@@ -172,8 +199,6 @@ static int run_isolated_suite(void)
     _print_machine_rows(rows, checks, global_max_abs);
 
     free(x);
-    free(mags);
-    free(freqs);
     return 0;
 }
 
@@ -196,19 +221,6 @@ static int run_dataset_recording(void)
         rows[i].max_abs = 0.0f;
     }
 
-    int8_t selector[Number_AUDIO_Features];
-    memset(selector, 0, sizeof(selector));
-    for (int i = 0; i < 4; i++) selector[k_feat_idx[i]] = 1;
-
-    float *mags = (float *)malloc(FFT_LEN * sizeof(float));
-    float *freqs = (float *)malloc(FFT_LEN * sizeof(float));
-    if (!mags || !freqs) {
-        fprintf(stderr, "Allocation failed.\n");
-        free(mags);
-        free(freqs);
-        return 1;
-    }
-
     int n_wins = ((AUDIO_LEN - WINDOW_SAMP_AUDIO) / AUDIO_STEP) + 1;
     float global_max_abs = 0.0f;
     int checks = 0;
@@ -216,33 +228,10 @@ static int run_dataset_recording(void)
     for (int w = 0; w < n_wins; w++) {
         int start = w * AUDIO_STEP;
         const float *sig = &audio_in.air[start];
-
-        float sum_mags = 0.0f;
-        compute_rfft(sig, WINDOW_SAMP_AUDIO, AUDIO_FS, mags, freqs, &sum_mags);
-        if (sum_mags <= 0.0f) continue;
-
-        float ref[4];
-        ref[0] = compute_rolloff(mags, freqs, FFT_LEN, sum_mags);
-        ref[1] = compute_centroid(mags, freqs, FFT_LEN, sum_mags);
-        ref[2] = compute_spread(mags, freqs, FFT_LEN, sum_mags, ref[1]);
-        ref[3] = compute_kurt(mags, freqs, FFT_LEN, sum_mags, ref[1], ref[2]);
-
-        float feats[Number_AUDIO_Features];
-        memset(feats, 0, sizeof(feats));
-        fxp_audio_fft_features_from_signal(selector, sig, WINDOW_SAMP_AUDIO, AUDIO_FS, feats);
-
-        for (int i = 0; i < 4; i++) {
-            float fxp_val = feats[k_feat_idx[i]];
-            _acc_update(&rows[i], fxp_val, ref[i]);
-            float abs_err = fabsf(fxp_val - ref[i]);
-            if (abs_err > global_max_abs) global_max_abs = abs_err;
-            checks++;
-        }
+        _evaluate_signal(sig, WINDOW_SAMP_AUDIO, rows, &checks, &global_max_abs);
     }
 
     _print_machine_rows(rows, checks, global_max_abs);
-    free(mags);
-    free(freqs);
     return 0;
 }
 #endif

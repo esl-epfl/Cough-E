@@ -1,4 +1,4 @@
-# Makefile for FxP regression harnesses (IMU + audio FFT)
+# Makefile for FxP regression harnesses (IMU + audio FFT + audio periodogram)
 # Run from C_application/test/  OR  from C_application/ with:
 #   make -C test
 
@@ -17,18 +17,26 @@ QFMT_HEADER = $(ROOT)/FxP/core/fxp_qformats.h
 
 TARGET_IMU      = fxp_model_regression
 TARGET_AUDIO_FFT = fxp_audio_fft_regression
+TARGET_AUDIO_PSD = fxp_audio_periodogram_regression
+TARGET_AUDIO_MEL = fxp_audio_mel_regression
 FFT_MODE ?= -DFIXED_POINT=16
 
 $(QFMT_HEADER): $(QFMT_MANIFEST) $(QFMT_GENERATOR)
 	$(PYTHON) $(QFMT_GENERATOR) $(QFMT_MANIFEST) $(QFMT_HEADER)
 
-all: $(QFMT_HEADER) $(TARGET_IMU) $(TARGET_AUDIO_FFT)
+all: $(QFMT_HEADER) $(TARGET_IMU) $(TARGET_AUDIO_FFT) $(TARGET_AUDIO_PSD) $(TARGET_AUDIO_MEL)
 
 $(TARGET_IMU): fxp_model_regression.c $(SRCS) $(QFMT_HEADER)
 	$(CC) $(CFLAGS) -o $@ fxp_model_regression.c $(SRCS) $(INC) $(LIBS)
 
 $(TARGET_AUDIO_FFT): fxp_audio_fft_regression.c $(SRCS) $(QFMT_HEADER)
 	$(CC) $(CFLAGS) $(FFT_MODE) -o $@ fxp_audio_fft_regression.c $(SRCS) $(INC) $(LIBS)
+
+$(TARGET_AUDIO_PSD): fxp_audio_periodogram_regression.c $(SRCS) $(QFMT_HEADER)
+	$(CC) $(CFLAGS) $(FFT_MODE) -o $@ fxp_audio_periodogram_regression.c $(SRCS) $(INC) $(LIBS)
+
+$(TARGET_AUDIO_MEL): fxp_audio_mel_regression.c $(SRCS) $(QFMT_HEADER)
+	$(CC) $(CFLAGS) $(FFT_MODE) -o $@ fxp_audio_mel_regression.c $(SRCS) $(INC) $(LIBS)
 
 run: all
 	./$(TARGET_IMU)
@@ -44,5 +52,21 @@ run_audio_fft32: FFT_MODE=-DFIXED_POINT=32
 run_audio_fft32: $(TARGET_AUDIO_FFT)
 	./$(TARGET_AUDIO_FFT)
 
+run_audio_psd16: FFT_MODE=-DFIXED_POINT=16
+run_audio_psd16: $(TARGET_AUDIO_PSD)
+	./$(TARGET_AUDIO_PSD)
+
+run_audio_psd32: FFT_MODE=-DFIXED_POINT=32
+run_audio_psd32: $(TARGET_AUDIO_PSD)
+	./$(TARGET_AUDIO_PSD)
+
+run_audio_mel16: FFT_MODE=-DFIXED_POINT=16
+run_audio_mel16: $(TARGET_AUDIO_MEL)
+	./$(TARGET_AUDIO_MEL)
+
+run_audio_mel32: FFT_MODE=-DFIXED_POINT=32
+run_audio_mel32: $(TARGET_AUDIO_MEL)
+	./$(TARGET_AUDIO_MEL)
+
 clean:
-	rm -f $(TARGET_IMU) $(TARGET_AUDIO_FFT)
+	rm -f $(TARGET_IMU) $(TARGET_AUDIO_FFT) $(TARGET_AUDIO_PSD) $(TARGET_AUDIO_MEL)

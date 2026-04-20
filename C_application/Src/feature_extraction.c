@@ -15,6 +15,8 @@
 #endif
 #if defined(FXP_MODE) && defined(FIXED_POINT)
 #include <audio/audio_fft_block.h>
+#include <audio/audio_mel_block.h>
+#include <audio/audio_periodogram_block.h>
 #endif
 #include <range_analysis.h>
 
@@ -166,79 +168,141 @@ void fft_based_features(const int8_t *features_selector, const float *sig, int16
     // FFT-dependent features' indexes
     // 0  : 6  the singular ones
 
-    if(is_required(features_selector, SPECTRAL_DECREASE, SPECTRAL_SKEW)){
+    if(!is_required(features_selector, SPECTRAL_DECREASE, SPECTRAL_SKEW)){
+        return;
+    }
 
-        RA_LOG_ARRAY("AUDIO_FFT", "fft_based_features", "sig_input", sig, len);
+    RA_LOG_ARRAY("AUDIO_FFT", "fft_based_features", "sig_input", sig, len);
 
+#if defined(FXP_MODE) && defined(FIXED_POINT)
+    int need_float_fft = features_selector[SPECTRAL_DECREASE]
+                      || features_selector[SPECTRAL_SLOPE]
+                      || features_selector[SPECTRAL_SKEW];
+    int need_fxp_fft = features_selector[SPECTRAL_ROLLOFF]
+                    || features_selector[SPECTRAL_CENTROID]
+                    || features_selector[SPECTRAL_SPREAD]
+                    || features_selector[SPECTRAL_KURTOSIS];
+
+    if(need_float_fft){
         int16_t fft_size = (len / 2) + 1;
         float *magnitudes = (float*) malloc(fft_size * sizeof(float));
         float *frequencies = (float*) malloc(fft_size *sizeof(float));
-        float sum_mags = 0.0;
+        float sum_mags = 0.0f;
+
+        if(!magnitudes || !frequencies){
+            free(magnitudes);
+            free(frequencies);
+            return;
+        }
 
         compute_rfft(sig, len, fs, magnitudes, frequencies, &sum_mags);
 
         if(features_selector[SPECTRAL_DECREASE]){
-            // compute SPEC_DECR
             float spectral_decrease = compute_spec_decrease(magnitudes, frequencies, (len/2)+1, sum_mags);
             feats[SPECTRAL_DECREASE] = spectral_decrease;
         }
 
         if(features_selector[SPECTRAL_SLOPE]){
-            // compute SPEC_SLOPE
             float spectral_slope = compute_spectral_slope(magnitudes, frequencies, (len/2)+1, sum_mags);
             feats[SPECTRAL_SLOPE] = spectral_slope;
         }
         
         if(features_selector[SPECTRAL_ROLLOFF]){
-            // compute SPEC_ROLL
             float spectral_rolloff = compute_rolloff(magnitudes, frequencies, (len/2)+1, sum_mags);
             feats[SPECTRAL_ROLLOFF] = spectral_rolloff;
         }
         
         if(is_required(features_selector, SPECTRAL_CENTROID, SPECTRAL_SKEW)){
-            // compute SPEC_CENTROID
             float spectral_cetroid = compute_centroid(magnitudes, frequencies, (len/2)+1, sum_mags);
 
             if(features_selector[SPECTRAL_CENTROID]){
-                // append SPEC_CENTROID
                 feats[SPECTRAL_CENTROID] = spectral_cetroid;
             }
 
             if(is_required(features_selector, SPECTRAL_SPREAD, SPECTRAL_SKEW)){
-                // compute SPEC_SPREAD
                 float spectral_spread = compute_spread(magnitudes, frequencies, (len/2)+1, sum_mags, spectral_cetroid);
 
                 if(features_selector[SPECTRAL_SPREAD]){
-                    // append SPEC_SPREAD
                     feats[SPECTRAL_SPREAD] = spectral_spread;
                 }
 
                 if(features_selector[SPECTRAL_KURTOSIS]){
-                    // compute SPEC_KURT
                     float kurt = compute_kurt(magnitudes, frequencies, (len/2)+1, sum_mags, spectral_cetroid, spectral_spread);
                     feats[SPECTRAL_KURTOSIS] = kurt;
                 }
 
                 if(features_selector[SPECTRAL_SKEW]){
-                    // compute SPEC_SKEW
                     float skew = compute_skew(magnitudes, frequencies, (len/2)+1, sum_mags, spectral_cetroid, spectral_spread);
                     feats[SPECTRAL_SKEW] = skew;
                 }
             }
         }
 
-#if defined(FXP_MODE) && defined(FIXED_POINT)
-        /*
-         * Hybrid audio FFT path:
-         * - run selected FFT-domain kernels in fixed-point arithmetic
-         * - keep non-ported kernels on float for mixed-precision validation
-         */
-        fxp_audio_fft_features_hybrid(features_selector, magnitudes, fft_size, fs, len, feats);
-#endif
-
         free(magnitudes);
         free(frequencies);
     }
+
+    if(need_fxp_fft){
+        fxp_audio_fft_features_from_signal(features_selector, sig, len, fs, feats);
+    }
+#else
+    int16_t fft_size = (len / 2) + 1;
+    float *magnitudes = (float*) malloc(fft_size * sizeof(float));
+    float *frequencies = (float*) malloc(fft_size *sizeof(float));
+    float sum_mags = 0.0f;
+
+    if(!magnitudes || !frequencies){
+        free(magnitudes);
+        free(frequencies);
+        return;
+    }
+
+    compute_rfft(sig, len, fs, magnitudes, frequencies, &sum_mags);
+
+    if(features_selector[SPECTRAL_DECREASE]){
+        float spectral_decrease = compute_spec_decrease(magnitudes, frequencies, (len/2)+1, sum_mags);
+        feats[SPECTRAL_DECREASE] = spectral_decrease;
+    }
+
+    if(features_selector[SPECTRAL_SLOPE]){
+        float spectral_slope = compute_spectral_slope(magnitudes, frequencies, (len/2)+1, sum_mags);
+        feats[SPECTRAL_SLOPE] = spectral_slope;
+    }
+    
+    if(features_selector[SPECTRAL_ROLLOFF]){
+        float spectral_rolloff = compute_rolloff(magnitudes, frequencies, (len/2)+1, sum_mags);
+        feats[SPECTRAL_ROLLOFF] = spectral_rolloff;
+    }
+    
+    if(is_required(features_selector, SPECTRAL_CENTROID, SPECTRAL_SKEW)){
+        float spectral_cetroid = compute_centroid(magnitudes, frequencies, (len/2)+1, sum_mags);
+
+        if(features_selector[SPECTRAL_CENTROID]){
+            feats[SPECTRAL_CENTROID] = spectral_cetroid;
+        }
+
+        if(is_required(features_selector, SPECTRAL_SPREAD, SPECTRAL_SKEW)){
+            float spectral_spread = compute_spread(magnitudes, frequencies, (len/2)+1, sum_mags, spectral_cetroid);
+
+            if(features_selector[SPECTRAL_SPREAD]){
+                feats[SPECTRAL_SPREAD] = spectral_spread;
+            }
+
+            if(features_selector[SPECTRAL_KURTOSIS]){
+                float kurt = compute_kurt(magnitudes, frequencies, (len/2)+1, sum_mags, spectral_cetroid, spectral_spread);
+                feats[SPECTRAL_KURTOSIS] = kurt;
+            }
+
+            if(features_selector[SPECTRAL_SKEW]){
+                float skew = compute_skew(magnitudes, frequencies, (len/2)+1, sum_mags, spectral_cetroid, spectral_spread);
+                feats[SPECTRAL_SKEW] = skew;
+            }
+        }
+    }
+
+    free(magnitudes);
+    free(frequencies);
+#endif
 }
 
 
@@ -247,56 +311,100 @@ void periodogram_based_features(const int8_t *features_selector, const float *si
     // Periodogram dependent features' indexes
     // 7  : 9 for the singular ones
     // 10 : 12 for the PSD ones
-    if(is_required(features_selector, SPECTRAL_FLATNESS, POWER_SPECTRAL_DENSITY + N_PSD - 1)){
+    if(!is_required(features_selector, SPECTRAL_FLATNESS, POWER_SPECTRAL_DENSITY + N_PSD - 1)){
+        return;
+    }
 
-        RA_LOG_ARRAY("AUDIO_PSD", "periodogram_based_features", "sig_input", sig, len);
+    RA_LOG_ARRAY("AUDIO_PSD", "periodogram_based_features", "sig_input", sig, len);
 
-        // compute Periodogram
+#if defined(FXP_MODE) && defined(FIXED_POINT)
+    int need_float_psd = features_selector[SPECTRAL_STD] || features_selector[SPECTRAL_ENTROPY];
+    int need_fxp_psd = features_selector[SPECTRAL_FLATNESS] || features_selector[DOMINANT_FREQUENCY];
+    if(!need_fxp_psd){
+        for(int8_t i = 0; i < N_PSD; i++){
+            if(features_selector[POWER_SPECTRAL_DENSITY + i]){
+                need_fxp_psd = 1;
+                break;
+            }
+        }
+    }
+
+    if(need_float_psd){
         int16_t psd_size = (NPERSEG / 2) + 1;
         float *psd = (float*)malloc(psd_size * sizeof(float));
         float *freqs = (float*)malloc(psd_size * sizeof(float));
-        compute_periodogram(sig, len, fs, psd, freqs);
-
-        if(features_selector[SPECTRAL_FLATNESS]){
-           // compute SPEC_FLAT
-           float spectral_flatness = compute_flatness(psd, psd_size);
-           feats[SPECTRAL_FLATNESS] = spectral_flatness;
+        if(!psd || !freqs){
+            free(psd);
+            free(freqs);
+            return;
         }
 
+        compute_periodogram(sig, len, fs, psd, freqs);
+
         if(features_selector[SPECTRAL_STD]){
-            // compute SPEC_STD
             float spectral_std = compute_std(psd, psd_size);
             feats[SPECTRAL_STD] = spectral_std;
         }
 
-
         if(features_selector[SPECTRAL_ENTROPY]){
-            // compute SPEC_ENTR
             float spectral_entr = compute_spectral_entropy(psd, psd_size);
             feats[SPECTRAL_ENTROPY] = spectral_entr;
-        }
-
-
-        if(features_selector[DOMINANT_FREQUENCY]){
-            // compute DOM_FREQ
-            float dominant_freq = get_domiant_freq(psd, freqs, psd_size);
-            feats[DOMINANT_FREQUENCY] = dominant_freq;
-        }
-
-        if(is_required(features_selector, POWER_SPECTRAL_DENSITY, POWER_SPECTRAL_DENSITY + N_PSD - 1)){
-            // compute PSD
-            float *band_powers = (float*)malloc(N_PSD * sizeof(float));
-            normalized_bandpowers(psd, freqs, psd_size, &features_selector[POWER_SPECTRAL_DENSITY], band_powers);
-            for(int8_t i=0; i<N_PSD; i++){
-                feats[POWER_SPECTRAL_DENSITY + i] = band_powers[i];
-            }
-
-            free(band_powers);
         }
 
         free(psd);
         free(freqs);
     }
+
+    if(need_fxp_psd){
+        fxp_audio_periodogram_features_from_signal(features_selector, sig, len, fs, feats);
+    }
+#else
+    int16_t psd_size = (NPERSEG / 2) + 1;
+    float *psd = (float*)malloc(psd_size * sizeof(float));
+    float *freqs = (float*)malloc(psd_size * sizeof(float));
+    if(!psd || !freqs){
+        free(psd);
+        free(freqs);
+        return;
+    }
+
+    compute_periodogram(sig, len, fs, psd, freqs);
+
+    if(features_selector[SPECTRAL_FLATNESS]){
+       float spectral_flatness = compute_flatness(psd, psd_size);
+       feats[SPECTRAL_FLATNESS] = spectral_flatness;
+    }
+
+    if(features_selector[SPECTRAL_STD]){
+        float spectral_std = compute_std(psd, psd_size);
+        feats[SPECTRAL_STD] = spectral_std;
+    }
+
+
+    if(features_selector[SPECTRAL_ENTROPY]){
+        float spectral_entr = compute_spectral_entropy(psd, psd_size);
+        feats[SPECTRAL_ENTROPY] = spectral_entr;
+    }
+
+
+    if(features_selector[DOMINANT_FREQUENCY]){
+        float dominant_freq = get_domiant_freq(psd, freqs, psd_size);
+        feats[DOMINANT_FREQUENCY] = dominant_freq;
+    }
+
+    if(is_required(features_selector, POWER_SPECTRAL_DENSITY, POWER_SPECTRAL_DENSITY + N_PSD - 1)){
+        float *band_powers = (float*)malloc(N_PSD * sizeof(float));
+        normalized_bandpowers(psd, freqs, psd_size, &features_selector[POWER_SPECTRAL_DENSITY], band_powers);
+        for(int8_t i=0; i<N_PSD; i++){
+            feats[POWER_SPECTRAL_DENSITY + i] = band_powers[i];
+        }
+
+        free(band_powers);
+    }
+
+    free(psd);
+    free(freqs);
+#endif
 }
 
 
@@ -329,6 +437,9 @@ void mel_spectrogram_features(const int8_t *features_selector, const float *sig,
 
         RA_LOG_ARRAY("AUDIO_MEL", "mel_spectrogram_features", "sig_input", sig, len);
 
+#if defined(FXP_MODE) && defined(FIXED_POINT)
+        fxp_audio_mel_features_from_signal(features_selector, sig, len, feats);
+#else
         // compute MEL SPECTROGRAM
 
         // Indexes of the Mel bins required for the features computation
@@ -373,6 +484,7 @@ void mel_spectrogram_features(const int8_t *features_selector, const float *sig,
         free(std_mel_spectr);
         free(max_mel_spectr);
         free(entropy_mel_spectr);
+#endif
     }
 }
 

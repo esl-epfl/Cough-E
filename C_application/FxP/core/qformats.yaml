@@ -29,6 +29,11 @@
     {"id": "AUDIO_FFT_NORM_DEV2",    "alias": "uq9_22_t",      "signed": false, "total_bits": 32, "frac_bits": 22, "domain": "audio", "stage": "intermediate"},
     {"id": "AUDIO_FFT_NORM_DEV4",    "alias": "uq18_12_t",     "signed": false, "total_bits": 32, "frac_bits": 12, "domain": "audio", "stage": "intermediate"},
     {"id": "AUDIO_FFT_KURT_WEIGHT",  "alias": "uq30_32_t",     "signed": false, "total_bits": 64, "frac_bits": 32, "domain": "audio", "stage": "intermediate"},
-    {"id": "AUDIO_FFT_KURTOSIS",     "alias": "uq7_15_t",      "signed": false, "total_bits": 32, "frac_bits": 15, "domain": "audio", "stage": "feature_output"}
+    {"id": "AUDIO_FFT_KURTOSIS",     "alias": "uq7_15_t",      "signed": false, "total_bits": 32, "frac_bits": 15, "domain": "audio", "stage": "feature_output"},
+
+    {"id": "AUDIO_PSD_PROXY",        "alias": "uq18_14_t",     "signed": false, "total_bits": 32, "frac_bits": 14, "domain": "audio", "stage": "intermediate"},
+    {"id": "AUDIO_PSD_INTEGRAL",     "alias": "uq24_8_t",      "signed": false, "total_bits": 32, "frac_bits": 8,  "domain": "audio", "stage": "intermediate"},
+    {"id": "AUDIO_PSD_FLATNESS",     "alias": "uq0_16_t",      "signed": false, "total_bits": 16, "frac_bits": 16, "domain": "audio", "stage": "feature_output"},
+    {"id": "AUDIO_PSD_BANDPOWER",    "alias": "uq0_16_t",      "signed": false, "total_bits": 16, "frac_bits": 16, "domain": "audio", "stage": "feature_output"}
   ]
 }
