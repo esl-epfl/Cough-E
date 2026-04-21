@@ -10,18 +10,15 @@ Pipeline per recording:
   6. Compare with ground truth using event-based scoring (timescoring)
 
 Usage:
-    python C_application/evaluation/evaluate.py                                     # full pipeline, all subjects
-    python C_application/evaluation/evaluate.py full --subjects 14287 14342         # specific subjects
-    python C_application/evaluation/evaluate.py full --dataset_path /path/to/data   # custom dataset path
-    python C_application/evaluation/evaluate.py aggregate --csv C_application/evaluation/results.csv  # re-aggregate from CSV
-    python C_application/evaluation/evaluate.py error                               # IMU regression-style error metrics
-    python C_application/evaluation/evaluate.py error-audio-fft --kissfft-fixed 16 # full-dataset audio FFT kernel regression
-    python C_application/evaluation/evaluate.py error-audio-psd --kissfft-fixed 16 # full-dataset audio periodogram kernel regression
-    python C_application/evaluation/evaluate.py error-audio-mel --kissfft-fixed 16 # full-dataset audio mel kernel regression
-    python C_application/evaluation/evaluate.py error-audio-fft --audio-fft-mode isolated --kissfft-fixed 16
-    python C_application/evaluation/evaluate.py error-audio-psd --audio-psd-mode isolated --kissfft-fixed 16
-    python C_application/evaluation/evaluate.py error-all --kissfft-fixed 32        # total regression suite (IMU + audio FFT + audio PSD + audio MEL)
-    python C_application/evaluation/evaluate.py both                                # ML metrics + regression-style error metrics
+    python C_application/evaluation/evaluate.py
+    python C_application/evaluation/evaluate.py --mode fxp
+    python C_application/evaluation/evaluate.py --mode fxp --twiddle 16
+    python C_application/evaluation/evaluate.py --compare
+    python C_application/evaluation/evaluate.py --mode fxp --subjects 14287 14342 --sounds cough laugh
+
+Legacy subcommands are still accepted temporarily as compatibility shims.
+Regression/error orchestration moved to:
+    python C_application/private/test/regression.py ...
 """
 
 import argparse
@@ -46,11 +43,32 @@ except ModuleNotFoundError:
     scoring = None
 
 sys.path.insert(0, os.path.dirname(__file__))
-from transform_dataset import (
-    transform_recording, transform_all, make_recording_suffix,
-    AUDIO_FS_TARGET, IMU_FS, FS_IMU,
-    SOUNDS, NOISES, MOVEMENTS, TRIALS,
-)
+_TRANSFORM_IMPORT_ERROR = None
+try:
+    from transform_dataset import (
+        transform_recording, transform_all, make_recording_suffix,
+        AUDIO_FS_TARGET, IMU_FS, FS_IMU,
+        SOUNDS, NOISES, MOVEMENTS, TRIALS,
+    )
+except ModuleNotFoundError as exc:
+    _TRANSFORM_IMPORT_ERROR = exc
+
+    def _missing_transform_dependency(*_args, **_kwargs):
+        raise RuntimeError(
+            "transform_dataset dependencies are missing. Install required Python packages "
+            "(for example scipy) to run evaluation commands."
+        ) from _TRANSFORM_IMPORT_ERROR
+
+    transform_recording = _missing_transform_dependency
+    transform_all = _missing_transform_dependency
+    make_recording_suffix = _missing_transform_dependency
+    AUDIO_FS_TARGET = 8000
+    IMU_FS = 100
+    FS_IMU = 100
+    SOUNDS = ["cough"]
+    NOISES = ["none"]
+    MOVEMENTS = ["none"]
+    TRIALS = ["1"]
 
 
 # ──────────────────────────────────────────────
@@ -97,10 +115,10 @@ ERROR_KERNEL_CSV_FIELDNAMES = [
     "rmse", "rel_rmse_pct", "mae", "wape_pct", "max_abs",
 ]
 
-REGRESSION_HARNESS = os.path.join(C_APP_DIR, "test", "fxp_model_regression.c")
-AUDIO_FFT_REGRESSION_HARNESS = os.path.join(C_APP_DIR, "test", "fxp_audio_fft_regression.c")
-AUDIO_PSD_REGRESSION_HARNESS = os.path.join(C_APP_DIR, "test", "fxp_audio_periodogram_regression.c")
-AUDIO_MEL_REGRESSION_HARNESS = os.path.join(C_APP_DIR, "test", "fxp_audio_mel_regression.c")
+REGRESSION_HARNESS = os.path.join(C_APP_DIR, "private", "test", "fxp_model_regression.c")
+AUDIO_FFT_REGRESSION_HARNESS = os.path.join(C_APP_DIR, "private", "test", "fxp_audio_fft_regression.c")
+AUDIO_PSD_REGRESSION_HARNESS = os.path.join(C_APP_DIR, "private", "test", "fxp_audio_periodogram_regression.c")
+AUDIO_MEL_REGRESSION_HARNESS = os.path.join(C_APP_DIR, "private", "test", "fxp_audio_mel_regression.c")
 REGRESSION_SRCS = (
     sorted(glob.glob(os.path.join(C_APP_DIR, "Src", "*.c"))) +
     sorted(glob.glob(os.path.join(C_APP_DIR, "kiss_fftr", "*.c"))) +
@@ -328,12 +346,27 @@ def evaluate_recording(subj_id, trial, mov, noise, sound,
     """Full pipeline for a single recording: transform -> compile -> run -> parse -> score."""
     if not hasattr(evaluate_recording, "_extra_flags"):
         evaluate_recording._extra_flags = ""
-    result = transform_recording(subj_id, trial, mov, noise, sound,
-                                 dataset_path, input_data_dir)
-    if result is None:
-        return None
+    skip_transform = getattr(evaluate_recording, "_skip_transform", False)
 
-    suffix, audio_relpath, imu_relpath, bio_relpath = result
+    if skip_transform:
+        suffix = f"{subj_id}_t{trial}_{mov}_{noise}_{sound}"
+        audio_relpath = f"{subj_id}/audio_input_{suffix}.h"
+        imu_relpath = f"{subj_id}/imu_input_{suffix}.h"
+        bio_relpath = f"{subj_id}/bio_input_{subj_id}.h"
+
+        audio_abs = os.path.join(input_data_dir, audio_relpath)
+        imu_abs = os.path.join(input_data_dir, imu_relpath)
+        bio_abs = os.path.join(input_data_dir, bio_relpath)
+        if not (os.path.exists(audio_abs) and os.path.exists(imu_abs) and os.path.exists(bio_abs)):
+            print(f"  SKIP {suffix}: --skip-transform set but required headers are missing")
+            return None
+    else:
+        result = transform_recording(subj_id, trial, mov, noise, sound,
+                                     dataset_path, input_data_dir)
+        if result is None:
+            return None
+        suffix, audio_relpath, imu_relpath, bio_relpath = result
+
     update_main_h(audio_relpath, imu_relpath, bio_relpath)
 
     if not compile_c_app(extra_flags=evaluate_recording._extra_flags):
@@ -1941,160 +1974,204 @@ def cmd_both(args):
         cmd_error_audio_mel(args)
 
 
-def main():
+LEGACY_COMMANDS = {
+    "transform",
+    "run",
+    "aggregate",
+    "full",
+    "compare",
+    "error",
+    "error-audio-fft",
+    "error-audio-psd",
+    "error-audio-mel",
+    "error-all",
+    "both",
+}
+
+
+def _compile_flags_for_mode(mode, twiddle):
+    if mode == "float":
+        return ""
+    return f"-DFXP_MODE -DFIXED_POINT={twiddle}"
+
+
+def _run_mode_eval(args, mode, save_outputs=True):
+    compile_flags = _compile_flags_for_mode(mode, args.twiddle)
+    evaluate_recording._extra_flags = compile_flags
+
+    if mode == "float":
+        print("Using float mode compile flags")
+    else:
+        print(f"Using fxp mode compile flags: {compile_flags}")
+
+    results = evaluate_subjects(
+        args.dataset_path,
+        subjects=args.subjects,
+        sounds=args.sounds,
+        noises=args.noises,
+    )
+    if not results:
+        print("No recordings processed. Check dataset path and subject IDs.")
+        sys.exit(1)
+
+    aggregate = compute_aggregate_metrics(results)
+    per_subject = print_results(results, aggregate)
+
+    if save_outputs and not args.no_save:
+        os.makedirs(args.output_dir, exist_ok=True)
+        save_results_csv(results, os.path.join(args.output_dir, "results.csv"))
+        save_summary_json(aggregate, os.path.join(args.output_dir, "summary.json"),
+                          build_per_subject_json(per_subject))
+
+    return aggregate
+
+
+def _print_compare_table(float_agg, fxp_agg):
+    fmt = "  {:<10} {:>8} {:>8} {:>8} {:>10}"
+    print("\n" + "=" * 70)
+    print("FLOAT vs FxP COMPARISON")
+    print("=" * 70)
+    print(fmt.format("Mode", "SE", "PR", "F1", "FP/hr"))
+    print("  " + "-" * 46)
+    print(fmt.format("Float",
+                     f"{float_agg['se_evt']:.4f}",
+                     f"{float_agg['pr_evt']:.4f}",
+                     f"{float_agg['f1_evt']:.4f}",
+                     f"{float_agg['fphr_evt']:.1f}"))
+    print(fmt.format("FxP",
+                     f"{fxp_agg['se_evt']:.4f}",
+                     f"{fxp_agg['pr_evt']:.4f}",
+                     f"{fxp_agg['f1_evt']:.4f}",
+                     f"{fxp_agg['fphr_evt']:.1f}"))
+    print(fmt.format("Delta",
+                     f"{(fxp_agg['se_evt'] - float_agg['se_evt']):+.4f}",
+                     f"{(fxp_agg['pr_evt'] - float_agg['pr_evt']):+.4f}",
+                     f"{(fxp_agg['f1_evt'] - float_agg['f1_evt']):+.4f}",
+                     f"{(fxp_agg['fphr_evt'] - float_agg['fphr_evt']):+.1f}"))
+    print("=" * 70)
+
+
+def _execute_unified(args, user_set_twiddle=False):
+    if user_set_twiddle and args.mode == "float":
+        print("Warning: --twiddle is ignored when --mode float is selected.")
+
+    evaluate_recording._skip_transform = bool(args.skip_transform)
+
+    if not args.skip_transform:
+        transform_all(args.dataset_path, INPUT_DATA_DIR, args.subjects)
+
+    if args.compare:
+        print("=== Float evaluation ===")
+        float_agg = _run_mode_eval(args, mode="float", save_outputs=False)
+        print("\n=== FxP evaluation ===")
+        fxp_agg = _run_mode_eval(args, mode="fxp", save_outputs=False)
+        _print_compare_table(float_agg, fxp_agg)
+
+        if not args.no_save:
+            print("Compare mode is console-only by default; no compare CSV/JSON artifacts were written.")
+        return
+
+    _run_mode_eval(args, mode=args.mode, save_outputs=True)
+
+
+def _forward_to_regression(argv):
+    regression_script = os.path.join(C_APP_DIR, "private", "test", "regression.py")
+    if not os.path.exists(regression_script):
+        print(f"Regression driver not found at {regression_script}")
+        sys.exit(2)
+    cmd = [sys.executable, regression_script] + argv
+    result = subprocess.run(cmd)
+    if result.returncode != 0:
+        sys.exit(result.returncode)
+
+
+def _run_legacy_cli(argv):
+    print("DEPRECATION: legacy subcommands are temporary compatibility shims.")
+    print("Please migrate to: python evaluation/evaluate.py [--mode float|fxp] [--twiddle 16|32] [flags]")
+
+    cmd = argv[0]
+    rest = argv[1:]
+
+    if cmd in {"error", "error-audio-fft", "error-audio-psd", "error-audio-mel", "error-all", "both"}:
+        _forward_to_regression(argv)
+        return
+
+    if cmd == "aggregate":
+        p = argparse.ArgumentParser(prog="evaluate.py aggregate")
+        p.add_argument("--csv", type=str, required=True, help="Path to results CSV")
+        args = p.parse_args(rest)
+        results = load_results_csv(args.csv)
+        aggregate = compute_aggregate_metrics(results)
+        per_subject = print_results(results, aggregate)
+        output_dir = os.path.dirname(args.csv) or "."
+        save_summary_json(aggregate, os.path.join(output_dir, "summary.json"),
+                          build_per_subject_json(per_subject))
+        return
+
+    p = argparse.ArgumentParser(prog=f"evaluate.py {cmd}")
+    p.add_argument("--dataset_path", type=str, default=DEFAULT_DATASET_PATH)
+    p.add_argument("--subjects", nargs="+", type=str, default=None)
+    p.add_argument("--sounds", nargs="+", type=str, default=SOUNDS)
+    p.add_argument("--noises", nargs="+", type=str, default=NOISES)
+    p.add_argument("--output_dir", type=str, default=os.path.dirname(__file__))
+    p.add_argument("--no-save", action="store_true", default=False)
+    p.add_argument("--fxp", action="store_true", default=False)
+    p.add_argument("--kissfft-fixed", type=int, choices=[16, 32], default=None)
+    args = p.parse_args(rest)
+
+    if cmd == "transform":
+        transform_all(args.dataset_path, INPUT_DATA_DIR, args.subjects)
+        return
+
+    mode = "fxp" if args.fxp else "float"
+    twiddle = args.kissfft_fixed if args.kissfft_fixed is not None else 32
+    namespace = argparse.Namespace(
+        mode=mode,
+        twiddle=twiddle,
+        subjects=args.subjects,
+        sounds=args.sounds,
+        noises=args.noises,
+        dataset_path=args.dataset_path,
+        compare=(cmd == "compare"),
+        output_dir=args.output_dir,
+        no_save=args.no_save,
+        skip_transform=(cmd in {"run", "compare"}),
+    )
+    _execute_unified(namespace, user_set_twiddle=(args.kissfft_fixed is not None))
+
+
+def main(argv=None):
+    if argv is None:
+        argv = sys.argv[1:]
+
+    if argv and argv[0] in LEGACY_COMMANDS:
+        _run_legacy_cli(argv)
+        return
+
     parser = argparse.ArgumentParser(
-        description="Evaluate Cough-E C application against full_dataset_test")
-    subparsers = parser.add_subparsers(dest="command")
-
-    def add_common_args(p, fxp_flag=False, kissfft_flag=False, save_flag=False):
-        p.add_argument("--dataset_path", type=str, default=DEFAULT_DATASET_PATH,
-                        help=f"Path to full_dataset_test (default: {DEFAULT_DATASET_PATH})")
-        p.add_argument("--subjects", nargs="+", type=str, default=None,
+        description="Unified evaluator CLI for float/FxP Cough-E runtime"
+    )
+    parser.add_argument("--mode", choices=["float", "fxp"], default="float",
+                        help="Pipeline precision mode (default: float)")
+    parser.add_argument("--twiddle", type=int, choices=[16, 32], default=32,
+                        help="KissFFT twiddle precision (used only in fxp mode)")
+    parser.add_argument("--subjects", nargs="+", type=str, default=None,
                         help="Specific subject IDs (default: all)")
-        p.add_argument("--sounds", nargs="+", type=str, default=SOUNDS)
-        p.add_argument("--noises", nargs="+", type=str, default=NOISES)
-        p.add_argument("--output_dir", type=str, default=None,
-                        help="Output directory (default: evaluation/)")
-        if fxp_flag:
-            p.add_argument("--fxp", action="store_true", default=False,
-                           help="Compile with -DFXP_MODE (IMU fixed-point kernels)")
-        if kissfft_flag:
-            p.add_argument(
-                "--kissfft-fixed",
-                type=int,
-                choices=[16, 32],
-                default=None,
-                help=(
-                    "Compile KissFFT in fixed-point mode with selected precision "
-                    "(-DFIXED_POINT=16 or -DFIXED_POINT=32)."
-                ),
-            )
-        if save_flag:
-            p.add_argument(
-                "--no-save",
-                action="store_true",
-                default=False,
-                help="Print metrics only; do not write CSV/JSON outputs.",
-            )
+    parser.add_argument("--sounds", nargs="+", type=str, default=SOUNDS)
+    parser.add_argument("--noises", nargs="+", type=str, default=NOISES)
+    parser.add_argument("--dataset-path", dest="dataset_path", type=str, default=DEFAULT_DATASET_PATH,
+                        help=f"Path to full_dataset_test (default: {DEFAULT_DATASET_PATH})")
+    parser.add_argument("--compare", action="store_true", default=False,
+                        help="Run float and fxp sequentially and print delta in console")
+    parser.add_argument("--output-dir", dest="output_dir", type=str, default=os.path.dirname(__file__),
+                        help="Output directory for CSV/JSON in single-mode runs")
+    parser.add_argument("--no-save", action="store_true", default=False,
+                        help="Print metrics only; do not write CSV/JSON outputs")
+    parser.add_argument("--skip-transform", action="store_true", default=False,
+                        help="Skip WAV->header regeneration for iterative runs")
 
-    def add_audio_fft_args(p):
-        p.add_argument(
-            "--audio-fft-mode",
-            choices=["dataset", "isolated"],
-            default="dataset",
-            help=(
-                "Run audio FFT regression on full dataset recordings (dataset) "
-                "or on a short synthetic signal suite (isolated)."
-            ),
-        )
-        p.add_argument(
-            "--kissfft-fixed",
-            type=int,
-            choices=[16, 32],
-            default=16,
-            help=(
-                "KissFFT fixed-point precision for the audio FFT regression harness "
-                "(default: 16)."
-            ),
-        )
-
-    def add_audio_psd_args(p):
-        p.add_argument(
-            "--audio-psd-mode",
-            choices=["dataset", "isolated"],
-            default="dataset",
-            help=(
-                "Run audio periodogram regression on full dataset recordings (dataset) "
-                "or on a short synthetic signal suite (isolated)."
-            ),
-        )
-        p.add_argument(
-            "--kissfft-fixed",
-            type=int,
-            choices=[16, 32],
-            default=16,
-            help=(
-                "KissFFT fixed-point precision for the audio periodogram regression harness "
-                "(default: 16)."
-            ),
-        )
-
-    p_transform = subparsers.add_parser("transform", help="Generate C headers from dataset")
-    add_common_args(p_transform)
-    p_transform.set_defaults(func=cmd_transform)
-
-    p_run = subparsers.add_parser("run", help="Run evaluation")
-    add_common_args(p_run, fxp_flag=True, kissfft_flag=True, save_flag=True)
-    p_run.set_defaults(func=cmd_run)
-
-    p_agg = subparsers.add_parser("aggregate", help="Compute metrics from existing CSV")
-    p_agg.add_argument("--csv", type=str, required=True, help="Path to results CSV")
-    p_agg.set_defaults(func=cmd_aggregate)
-
-    p_full = subparsers.add_parser("full", help="Transform dataset + run evaluation")
-    add_common_args(p_full, fxp_flag=True, kissfft_flag=True, save_flag=True)
-    p_full.set_defaults(func=cmd_full)
-
-    p_compare = subparsers.add_parser("compare",
-                                      help="Run float and FxP evaluations side-by-side")
-    add_common_args(p_compare, kissfft_flag=True, save_flag=True)
-    p_compare.set_defaults(func=cmd_compare)
-
-    p_error = subparsers.add_parser("error",
-                                    help="Run IMU regression-style error metrics on selected recordings")
-    add_common_args(p_error)
-    p_error.set_defaults(func=cmd_error)
-
-    p_error_audio = subparsers.add_parser(
-        "error-audio-fft",
-        help="Run audio FFT regression metrics (full dataset by default)",
-    )
-    add_common_args(p_error_audio)
-    add_audio_fft_args(p_error_audio)
-    p_error_audio.set_defaults(func=cmd_error_audio_fft)
-
-    p_error_audio_psd = subparsers.add_parser(
-        "error-audio-psd",
-        help="Run audio periodogram regression metrics (full dataset by default)",
-    )
-    add_common_args(p_error_audio_psd)
-    add_audio_psd_args(p_error_audio_psd)
-    p_error_audio_psd.set_defaults(func=cmd_error_audio_psd)
-
-    p_error_audio_mel = subparsers.add_parser(
-        "error-audio-mel",
-        help="Run audio mel regression metrics (full dataset by default)",
-    )
-    add_common_args(p_error_audio_mel, kissfft_flag=True)
-    p_error_audio_mel.set_defaults(func=cmd_error_audio_mel)
-
-    p_error_all = subparsers.add_parser(
-        "error-all",
-        help="Run IMU, audio FFT, audio periodogram, and audio mel regression metrics",
-    )
-    add_common_args(p_error_all, kissfft_flag=True)
-    p_error_all.set_defaults(func=cmd_error_all)
-
-    p_both = subparsers.add_parser("both",
-                                   help="Run ML metrics and regression-style error metrics")
-    add_common_args(p_both, fxp_flag=True, kissfft_flag=True, save_flag=True)
-    p_both.add_argument("--ml_mode", choices=["compare", "run"], default="compare",
-                        help="ML phase mode for 'both' command (default: compare)")
-    p_both.add_argument("--include-audio-fft", action="store_true", default=False,
-                        help="Also run isolated audio FFT kernel regression after IMU error metrics.")
-    p_both.add_argument("--include-audio-psd", action="store_true", default=False,
-                        help="Also run isolated audio periodogram kernel regression after IMU error metrics.")
-    p_both.add_argument("--include-audio-mel", action="store_true", default=False,
-                        help="Also run audio mel kernel regression after IMU error metrics.")
-    p_both.set_defaults(func=cmd_both)
-
-    args = parser.parse_args()
-
-    # Default to 'compare' when no subcommand given
-    if args.command is None:
-        args = parser.parse_args(["compare"])
-
-    args.func(args)
+    args = parser.parse_args(argv)
+    _execute_unified(args, user_set_twiddle=("--twiddle" in argv))
 
 
 if __name__ == "__main__":

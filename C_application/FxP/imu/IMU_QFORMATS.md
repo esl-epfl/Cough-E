@@ -15,11 +15,6 @@ This table is derived from `FxP/core/qformats.yaml`.
 | Kurtosis output | `q34_30_t` | Q34.30 | `FXP_FRAC_IMU_KURTOSIS_RAW` |
 | Crest factor (L2G) | `uq2_14_t` | UQ2.14 | `FXP_FRAC_IMU_CREST_L2G` |
 
-Kernel implementations live in one file per family:
+Kernel implementations are consolidated in:
 
-- `imu_kernel_rms.c`
-- `imu_kernel_line_length.c`
-- `imu_kernel_kurtosis.c`
-- `imu_kernel_norm.c`
-- `imu_kernel_peak.c`
-- `imu_kernel_azc.c`
+- `imu_pipeline.c`

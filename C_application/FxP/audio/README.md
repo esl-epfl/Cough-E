@@ -5,50 +5,14 @@ type primitives remain in `FxP/core/`.
 
 Current contents:
 
-- `audio_fft_bridge.{h,c}`:
-  - float<->FxP bridge utilities for FFT-domain arrays
-  - Q-format conversions for magnitudes/frequencies/sum
-- `audio_fft_kernels.{h,c}`:
-  - modular fixed-point kernels for:
-    - spectral rolloff
-    - spectral centroid
-    - spectral spread
-    - spectral kurtosis
-- `audio_fft_block.{h,c}`:
-  - high-level FxP entry points used by `fft_based_features()`
-  - `fxp_audio_fft_features_from_signal(...)` computes FFT-domain features from
-    signal input through a fixed-point FFT path
-  - `fxp_audio_fft_features_hybrid(...)` keeps the previous bridge-based kernel
-    regression path
-- `audio_periodogram_bridge.{h,c}`:
-  - float<->FxP bridge for periodogram-domain arrays
-  - PSD proxy reconstruction using scale-cancellation described in `OVERLEAF.md`
-- `audio_periodogram_kernels.{h,c}`:
-  - modular fixed-point kernels for:
-    - dominant frequency
-    - spectral flatness
-    - normalized band powers
-- `audio_periodogram_block.{h,c}`:
-  - high-level FxP entry points used by `periodogram_based_features()`
-  - `fxp_audio_periodogram_features_from_signal(...)` computes periodogram-domain
-    features from signal input through fixed-point Welch/FFT arithmetic
-  - `fxp_audio_periodogram_features_hybrid(...)` keeps the previous bridge-based
-    kernel regression path
-  - implementation note:
-    - for `FIXED_POINT=32`, this block uses an internal high-precision
-      periodogram input format (`Q1.30`) before the KISS FFT to reduce
-      low-energy bin quantization error (important for spectral flatness)
-    - this change is intentionally local to the periodogram block
-      (`audio_periodogram_block.c`) and does not modify the FFT feature block
-      (`audio_fft_block.c`), which keeps its existing int16/Q14 path
-    - no 128-bit arithmetic is used in the periodogram path
-- `audio_mel_block.{h,c}`:
-  - high-level FxP entry point used by `mel_spectrogram_features()`
-  - `fxp_audio_mel_features_from_signal(...)` computes selected Mel feature
-    families (mean/std/max/entropy per required Mel bins) from signal input
-    through a fixed-point STFT + Mel projection path
-  - output write-back remains float to preserve the current downstream
-    classifier interface
+- `audio_pipeline_fxp.c`:
+  - consolidated fixed-point audio runtime implementation (FFT, periodogram, MEL).
+  - no per-processing-block split files remain.
+- `audio_pipeline_fxp.h`:
+  - public FxP audio entrypoints:
+    - `fxp_audio_fft_features_from_q14(...)`
+    - `fxp_audio_periodogram_features_from_q14(...)`
+    - `fxp_audio_mel_features_from_q14(...)`
 
 Latest regression snapshot (`2026-04-20`):
 
@@ -77,7 +41,7 @@ Latest Mel regression snapshot (`2026-04-20`):
 
 Latest Mel isolated sanity snapshot after FxP precision fixes (`2026-04-20`):
 
-- command: `make -B -C C_application/test fxp_audio_mel_regression FFT_MODE=-DFIXED_POINT=32 && C_application/test/fxp_audio_mel_regression`
+- command: `python C_application/private/test/regression.py error-audio-mel --kissfft-fixed 32`
 - `N=320` per kernel (synthetic suite)
 
 | Kernel | RMSE | RelRMSE | MaxAbs |
@@ -130,9 +94,9 @@ ML execution in FxP mode:
 - safety default:
   - if `--fxp` is set and `--kissfft-fixed` is omitted in `run`/`compare`, `evaluate.py` now defaults to `-DFIXED_POINT=32`.
 - audio block behavior in this mode:
-  - FFT block dispatch (`fxp_audio_fft_features_from_signal`) is active for selected FFT kernels.
-  - Periodogram block dispatch (`fxp_audio_periodogram_features_from_signal`) is active for selected PSD kernels.
-  - Mel block dispatch (`fxp_audio_mel_features_from_signal`) is active for selected Mel bins/families.
+  - FFT block dispatch (`fxp_audio_fft_features_from_q14`) is active for selected FFT kernels.
+  - Periodogram block dispatch (`fxp_audio_periodogram_features_from_q14`) is active for selected PSD kernels.
+  - Mel block dispatch (`fxp_audio_mel_features_from_q14`) is active for selected Mel bins/families.
 - model selector note (`Inc/audio_model.h`):
   - selected FFT/PSD kernels are all among the FxP-ported set (`SPECTRAL_ROLLOFF`, `SPECTRAL_SPREAD`, `SPECTRAL_KURTOSIS`, `SPECTRAL_FLATNESS`, `DOMINANT_FREQUENCY`, `PSD_BAND_1..3`).
   - float-only fallback kernels in these families (`SPECTRAL_DECREASE`, `SPECTRAL_SLOPE`, `SPECTRAL_SKEW`, `SPECTRAL_STD`, `SPECTRAL_ENTROPY`) are not selected by the current model feature selector.

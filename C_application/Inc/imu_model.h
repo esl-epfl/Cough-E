@@ -48,7 +48,9 @@ static const int8_t imu_bio_feats_selector[Number_bio_features] = {
 /**
  * Returns the model confidence for the current window to be COUGH
 */
+#ifndef FXP_MODE
 float imu_predict(float *feat);
+#endif
 
 
 /**
@@ -3983,6 +3985,7 @@ static const imu_node_children_t imu_children[IMU_N_TREES][IMU_MAX_NODES] = {
 
 };
 
+#ifndef FXP_MODE
 static const float imu_scores[IMU_N_TREES][IMU_MAX_LEAVES] = {
 	{
 		-0.5951458,
@@ -11906,6 +11909,8 @@ static const float imu_values_comp[IMU_N_TREES][IMU_MAX_NODES] = {
 	},
 
 };
+
+#endif /* !FXP_MODE */
 
 static const int16_t imu_feat_comp[IMU_N_TREES][IMU_MAX_NODES] = {
 	{

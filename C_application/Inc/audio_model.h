@@ -50,7 +50,9 @@ static const int8_t audio_bio_feats_selector[Number_bio_features] = {
  * 
  * @param *feat 	:	pointer to the features to be processed
 */
+#ifndef FXP_MODE
 float audio_predict(float *feat);
+#endif
 
 
 /**
@@ -3339,6 +3341,7 @@ static const audio_node_children_t audio_children[AUD_N_TREES][AUD_MAX_NODES] = 
 
 };
 
+#ifndef FXP_MODE
 static const float audio_scores[AUD_N_TREES][MAX_LEAVES] = {
 	{
 		0.5647059,
@@ -9970,6 +9973,8 @@ static const float audio_values_comp[AUD_N_TREES][AUD_MAX_NODES] = {
 	},
 
 };
+
+#endif /* !FXP_MODE */
 
 static const int16_t audio_feat_comp[AUD_N_TREES][AUD_MAX_NODES] = {
 	{

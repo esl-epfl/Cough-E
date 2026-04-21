@@ -66,7 +66,7 @@ def _ensure_twiddle_headers(kiss_dir: Path) -> None:
 
 
 def _build_harness(kiss_dir: Path, out_bin: Path, fixed_point: int) -> None:
-    harness = kiss_dir.parent / "test" / "kissfft_twiddle_harness.c"
+    harness = kiss_dir.parent / "private" / "test" / "kissfft_twiddle_harness.c"
     cmd = [
         "gcc",
         "-std=c11",

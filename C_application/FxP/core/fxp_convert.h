@@ -3,9 +3,8 @@
 #include <limits.h>
 #include <stdint.h>
 
+#include <core/fxp_core.h>
 #include <core/fxp_qformats.h>
-#include <core/fxp_sat.h>
-#include <core/fxp_types.h>
 
 static inline int32_t fxp_from_float_signed(float x, uint8_t frac_bits)
 {

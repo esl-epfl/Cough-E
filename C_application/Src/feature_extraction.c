@@ -14,9 +14,7 @@
 #include <core/fxp_convert.h>
 #endif
 #if defined(FXP_MODE) && defined(FIXED_POINT)
-#include <audio/audio_fft_block.h>
-#include <audio/audio_mel_block.h>
-#include <audio/audio_periodogram_block.h>
+#include <audio/audio_pipeline_fxp.h>
 #endif
 #include <range_analysis.h>
 
@@ -24,8 +22,9 @@
 const char *_ra_imu_signal_ctx = "UNKNOWN";
 int _ra_imu_active = 0;
 #endif
-#include <imu/imu_dispatch.h>
+#include <imu/imu_pipeline.h>
 
+#ifndef FXP_MODE
 
 //////////////////////////////////////////////////////////////////////////////////
 /*                      Local functions declaration                             */
@@ -146,7 +145,6 @@ void compute_imu_family(const int8_t *features_selector, const float signal[][Nu
 
 //////////////////////////////////////////////////////////////////////////////////
 
-
 //////////////////////////////////////////////////////////////////////////////////
 /*                      Local functions definitions                             */
 //////////////////////////////////////////////////////////////////////////////////
@@ -243,7 +241,34 @@ void fft_based_features(const int8_t *features_selector, const float *sig, int16
     }
 
     if(need_fxp_fft){
-        fxp_audio_fft_features_from_signal(features_selector, sig, len, fs, feats);
+        int16_t *sig_q14 = (int16_t*)malloc((size_t)len * sizeof(int16_t));
+        fxp_q16_t *feats_q16 = (fxp_q16_t*)calloc((size_t)Number_AUDIO_Features, sizeof(fxp_q16_t));
+        if(!sig_q14 || !feats_q16){
+            free(sig_q14);
+            free(feats_q16);
+            return;
+        }
+
+        for(int16_t i = 0; i < len; i++){
+            sig_q14[i] = FXP_AUDIO_FROM_FLOAT(sig[i]);
+        }
+        fxp_audio_fft_features_from_q14(features_selector, sig_q14, len, fs, feats_q16);
+
+        if(features_selector[SPECTRAL_ROLLOFF]){
+            feats[SPECTRAL_ROLLOFF] = FXP_TO_FLOAT(feats_q16[SPECTRAL_ROLLOFF], FXP_PIPE_FRAC);
+        }
+        if(features_selector[SPECTRAL_CENTROID]){
+            feats[SPECTRAL_CENTROID] = FXP_TO_FLOAT(feats_q16[SPECTRAL_CENTROID], FXP_PIPE_FRAC);
+        }
+        if(features_selector[SPECTRAL_SPREAD]){
+            feats[SPECTRAL_SPREAD] = FXP_TO_FLOAT(feats_q16[SPECTRAL_SPREAD], FXP_PIPE_FRAC);
+        }
+        if(features_selector[SPECTRAL_KURTOSIS]){
+            feats[SPECTRAL_KURTOSIS] = FXP_TO_FLOAT(feats_q16[SPECTRAL_KURTOSIS], FXP_PIPE_FRAC);
+        }
+
+        free(sig_q14);
+        free(feats_q16);
     }
 #else
     int16_t fft_size = (len / 2) + 1;
@@ -356,7 +381,34 @@ void periodogram_based_features(const int8_t *features_selector, const float *si
     }
 
     if(need_fxp_psd){
-        fxp_audio_periodogram_features_from_signal(features_selector, sig, len, fs, feats);
+        int16_t *sig_q14 = (int16_t*)malloc((size_t)len * sizeof(int16_t));
+        fxp_q16_t *feats_q16 = (fxp_q16_t*)calloc((size_t)Number_AUDIO_Features, sizeof(fxp_q16_t));
+        if(!sig_q14 || !feats_q16){
+            free(sig_q14);
+            free(feats_q16);
+            return;
+        }
+
+        for(int16_t i = 0; i < len; i++){
+            sig_q14[i] = FXP_AUDIO_FROM_FLOAT(sig[i]);
+        }
+        fxp_audio_periodogram_features_from_q14(features_selector, sig_q14, len, fs, feats_q16);
+
+        if(features_selector[SPECTRAL_FLATNESS]){
+            feats[SPECTRAL_FLATNESS] = FXP_TO_FLOAT(feats_q16[SPECTRAL_FLATNESS], FXP_PIPE_FRAC);
+        }
+        if(features_selector[DOMINANT_FREQUENCY]){
+            feats[DOMINANT_FREQUENCY] = FXP_TO_FLOAT(feats_q16[DOMINANT_FREQUENCY], FXP_PIPE_FRAC);
+        }
+        for(int8_t i = 0; i < N_PSD; i++){
+            int idx = POWER_SPECTRAL_DENSITY + i;
+            if(features_selector[idx]){
+                feats[idx] = FXP_TO_FLOAT(feats_q16[idx], FXP_PIPE_FRAC);
+            }
+        }
+
+        free(sig_q14);
+        free(feats_q16);
     }
 #else
     int16_t psd_size = (NPERSEG / 2) + 1;
@@ -438,7 +490,26 @@ void mel_spectrogram_features(const int8_t *features_selector, const float *sig,
         RA_LOG_ARRAY("AUDIO_MEL", "mel_spectrogram_features", "sig_input", sig, len);
 
 #if defined(FXP_MODE) && defined(FIXED_POINT)
-        fxp_audio_mel_features_from_signal(features_selector, sig, len, feats);
+        int16_t *sig_q14 = (int16_t*)malloc((size_t)len * sizeof(int16_t));
+        fxp_q16_t *feats_q16 = (fxp_q16_t*)calloc((size_t)Number_AUDIO_Features, sizeof(fxp_q16_t));
+        if(!sig_q14 || !feats_q16){
+            free(sig_q14);
+            free(feats_q16);
+            return;
+        }
+        for(int16_t i = 0; i < len; i++){
+            sig_q14[i] = FXP_AUDIO_FROM_FLOAT(sig[i]);
+        }
+        fxp_audio_mel_features_from_q14(features_selector, sig_q14, len, feats_q16);
+
+        for(int16_t i = MEL_FREQUENCY_CEPSTRAL_COEFFICIENT; i < ZERO_CROSSING_RATE; i++){
+            if(features_selector[i]){
+                feats[i] = FXP_TO_FLOAT(feats_q16[i], FXP_PIPE_FRAC);
+            }
+        }
+
+        free(sig_q14);
+        free(feats_q16);
 #else
         // compute MEL SPECTROGRAM
 
@@ -581,12 +652,18 @@ void compute_imu_family_fxp(const int8_t *features_selector, const q11_5_t signa
 
     if(is_required(features_selector, sig_feat_idx, sig_feat_idx+Num_imu_feat_families-1)){
         q11_5_t *signal_samples = (q11_5_t*)malloc((size_t)len * sizeof(q11_5_t));
+        fxp_q16_t feat_q16[Num_imu_feat_families] = {0};
         for(int16_t i=0; i<len; i++){
             signal_samples[i] = signal[i][signal_idx];
         }
 
         imu_sig_raw_t s = { .data = signal_samples, .len = len };
-        imu_run_feature_table(&features_selector[sig_feat_idx], imu_view_from_raw(s), &feats[sig_feat_idx]);
+        imu_run_feature_table_q16(&features_selector[sig_feat_idx], imu_view_from_raw(s), feat_q16);
+        for(int8_t j = 0; j < Num_imu_feat_families; j++){
+            if(features_selector[sig_feat_idx + j] == 1){
+                feats[sig_feat_idx + j] = FXP_TO_FLOAT(feat_q16[j], FXP_PIPE_FRAC);
+            }
+        }
         free(signal_samples);
     }
 }
@@ -670,11 +747,27 @@ void imu_features(const int8_t *features_selector, const float sig[][Num_IMU_sig
     compute_imu_family_fxp(features_selector, raw_fxp, len, GYROSCOPE_R, GYRO_R_FEAT, feats);
 
     // Combined signals
-    imu_sig_l2a_t s_l2a = { .data = combo_l2a, .len = len };
-    imu_run_feature_table(&features_selector[ACCEL_COMBO], imu_view_from_l2a(s_l2a), &feats[ACCEL_COMBO]);
+    {
+        fxp_q16_t combo_feats_q16[Num_imu_feat_families] = {0};
+        imu_sig_l2a_t s_l2a = { .data = combo_l2a, .len = len };
+        imu_run_feature_table_q16(&features_selector[ACCEL_COMBO], imu_view_from_l2a(s_l2a), combo_feats_q16);
+        for(int8_t j = 0; j < Num_imu_feat_families; j++){
+            if(features_selector[ACCEL_COMBO + j] == 1){
+                feats[ACCEL_COMBO + j] = FXP_TO_FLOAT(combo_feats_q16[j], FXP_PIPE_FRAC);
+            }
+        }
+    }
 
-    imu_sig_l2g_t s_l2g = { .data = combo_l2g, .len = len };
-    imu_run_feature_table(&features_selector[GYRO_COMBO], imu_view_from_l2g(s_l2g), &feats[GYRO_COMBO]);
+    {
+        fxp_q16_t combo_feats_q16[Num_imu_feat_families] = {0};
+        imu_sig_l2g_t s_l2g = { .data = combo_l2g, .len = len };
+        imu_run_feature_table_q16(&features_selector[GYRO_COMBO], imu_view_from_l2g(s_l2g), combo_feats_q16);
+        for(int8_t j = 0; j < Num_imu_feat_families; j++){
+            if(features_selector[GYRO_COMBO + j] == 1){
+                feats[GYRO_COMBO + j] = FXP_TO_FLOAT(combo_feats_q16[j], FXP_PIPE_FRAC);
+            }
+        }
+    }
 
     free(combo_l2g);
     free(combo_l2a);
@@ -728,3 +821,5 @@ void imu_features(const int8_t *features_selector, const float sig[][Num_IMU_sig
 
 
 //////////////////////////////////////////////////////////////////////////////////
+
+#endif

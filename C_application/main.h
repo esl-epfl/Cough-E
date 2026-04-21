@@ -8,6 +8,9 @@
 //////////////////////////////////////
 #include <audio_model.h>            
 #include <imu_model.h>              
+#ifdef FXP_MODE
+#include <model_fxp.h>
+#endif
 //////////////////////////////////////
 
 
@@ -25,10 +28,12 @@
 
 
 /* Threshold for the audio model */
+#ifndef FXP_MODE
 #define AUDIO_TH    0.3
 
 /* Threshold for the imu model */
 #define IMU_TH    0.05
+#endif
 
 // Defines (in seconds) how often to provide the final estimation (execute post-processing)
 #define TIME_DEADLINE_OUTPUT    1.5
