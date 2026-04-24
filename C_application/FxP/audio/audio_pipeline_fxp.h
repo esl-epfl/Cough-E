@@ -2,6 +2,7 @@
 
 #include <inttypes.h>
 
+#include <core/cough_backend.h>
 #include <audio_features.h>
 
 #include <core/fxp_core.h>

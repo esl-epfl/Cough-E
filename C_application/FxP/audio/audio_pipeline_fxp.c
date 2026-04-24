@@ -720,7 +720,7 @@ void fxp_audio_periodogram_features_from_q14(const int8_t *features_selector,
 #define FXP_MEL_LN2_Q11 ((int32_t)((FXP_MEL_LN2_Q24 + (1 << 12)) >> 13))
 #define FXP_MEL_LN_Q11_SCALE_P ((int32_t)(FXP_MEL_PROB_FRAC * FXP_MEL_LN2_Q11))
 #define FXP_MEL_TOP_DB_Q11 ((int32_t)163840)
-#define FXP_MEL_DB_PER_SHIFT_Q11 ((int32_t)12330)
+#define FXP_MEL_DB_PER_SHIFT_Q11 ((int32_t)6165)
 #define FXP_MEL_POWER_MSB_TARGET 46U
 #define FXP_MEL_ENT_ALIGN_FRAC 8U
 

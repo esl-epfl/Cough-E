@@ -3,18 +3,11 @@
 
 #include <stdlib.h>
 #include <imu_features.h>
+#include <core/cough_backend.h>
 
-#ifdef FXP_MODE
-#include <core/fxp_core.h>
-#include <core/fxp_qformats.h>
-typedef fxp_q16_t feat_t;
-typedef int16_t audio_sample_t; /* Q14 audio carrier */
-typedef q11_5_t imu_sample_t;   /* Q11.5 raw IMU carrier */
-#else
-typedef float feat_t;
-typedef float audio_sample_t;
-typedef float imu_sample_t;
-#endif
+typedef cough_feat_t feat_t;
+typedef cough_audio_sample_t audio_sample_t;
+typedef cough_imu_sample_t imu_sample_t;
 
 /**
     Computes features from the AUDIO signal, passed as parameter.

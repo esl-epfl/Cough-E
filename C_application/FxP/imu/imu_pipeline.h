@@ -2,6 +2,7 @@
 
 #include <inttypes.h>
 
+#include <core/cough_backend.h>
 #include <imu_features.h>
 
 #ifdef FXP_MODE

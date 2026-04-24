@@ -12,6 +12,7 @@
 #include <postprocessing.h>
 
 #ifdef FXP_MODE
+#include <core/cough_backend.h>
 #include <core/fxp_convert.h>
 #define FEAT_THRESHOLD_AUDIO ((feat_t)FXP_AUDIO_SCORE_TH_Q16)
 #define FEAT_THRESHOLD_IMU ((feat_t)FXP_IMU_SCORE_TH_Q16)
@@ -60,7 +61,7 @@ int main(void)
     uint16_t *starts = (uint16_t *)malloc((size_t)MAX_PEAKS_EXPECTED * sizeof(uint16_t));
     uint16_t *ends = (uint16_t *)malloc((size_t)MAX_PEAKS_EXPECTED * sizeof(uint16_t));
     uint16_t *locs = (uint16_t *)malloc((size_t)MAX_PEAKS_EXPECTED * sizeof(uint16_t));
-    float *peaks = (float *)malloc((size_t)MAX_PEAKS_EXPECTED * sizeof(float));
+    postproc_peak_t *peaks = (postproc_peak_t *)malloc((size_t)MAX_PEAKS_EXPECTED * sizeof(postproc_peak_t));
 
     uint16_t n_peaks = 0;
     uint16_t new_added = 0;
@@ -99,18 +100,18 @@ int main(void)
 
     /* Single runtime boundary: source float samples are converted once to FxP carriers. */
     for (int32_t i = 0; i < AUDIO_LEN; i++) {
-        audio_in_q14[i] = FXP_AUDIO_FROM_FLOAT(audio_in.air[i]);
+        audio_in_q14[i] = cough_source_audio_sample(audio_in.air[i]);
     }
     for (int32_t i = 0; i < IMU_LEN; i++) {
         for (int8_t ax = 0; ax < Num_IMU_signals; ax++) {
-            imu_in_q5[i][ax] = FXP_IMU_RAW_FROM_FLOAT(imu_in[i][ax]);
+            imu_in_q5[i][ax] = cough_source_imu_sample(imu_in[i][ax]);
         }
     }
 
     audio_runtime_in = audio_in_q14;
     imu_runtime_in = imu_in_q5;
-    gender_feature = FXP_FROM_FLOAT(gender, FXP_PIPE_FRAC);
-    bmi_feature = FXP_FROM_FLOAT(bmi, FXP_PIPE_FRAC);
+    gender_feature = cough_source_feat(gender);
+    bmi_feature = cough_source_feat(bmi);
 #else
     const audio_sample_t *audio_runtime_in = audio_in.air;
     const imu_sample_t (*imu_runtime_in)[Num_IMU_signals] = imu_in;
@@ -170,7 +171,7 @@ int main(void)
             audio_score = audio_predict(features_audio_model);
             fsm_state.model_cls_out = is_cough(audio_score, FEAT_THRESHOLD_AUDIO) ? COUGH_OUT : NON_COUGH_OUT;
 
-            _get_cough_peaks(&audio_in.air[idx_start_window], WINDOW_SAMP_AUDIO, AUDIO_FS,
+            _get_cough_peaks(&audio_runtime_in[idx_start_window], WINDOW_SAMP_AUDIO, AUDIO_FS,
                              &starts[n_peaks], &ends[n_peaks], &locs[n_peaks], &peaks[n_peaks], &new_added);
 
             for (uint16_t j = 0; j < new_added; j++) {
@@ -200,7 +201,7 @@ int main(void)
                 uint16_t *final_starts = (uint16_t *)malloc((size_t)n_idxs_above_th * sizeof(uint16_t));
                 uint16_t *final_ends = (uint16_t *)malloc((size_t)n_idxs_above_th * sizeof(uint16_t));
                 uint16_t *above_locs = (uint16_t *)malloc((size_t)n_idxs_above_th * sizeof(uint16_t));
-                float *above_peaks = (float *)malloc((size_t)n_idxs_above_th * sizeof(float));
+                postproc_peak_t *above_peaks = (postproc_peak_t *)malloc((size_t)n_idxs_above_th * sizeof(postproc_peak_t));
 
                 for (uint16_t i = 0; i < n_idxs_above_th; i++) {
                     final_starts[i] = starts[idxs_above_th[i]];

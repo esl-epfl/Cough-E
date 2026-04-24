@@ -23,8 +23,6 @@ C_application/test/kissfft_fxp_verify.c
 C_application/kiss_fftr/gen_twiddles_q15.py
 C_application/kiss_fftr/twiddles_win08_fs8000_q15.h
 C_application/kiss_fftr/twiddles_win08_fs8000_q31.h
-C_application/kiss_fftr/twiddle_precision_cases.csv
-C_application/kiss_fftr/twiddle_precision_summary.csv
 
 # Range/precision/accuracy analysis outputs (generated, not source)
 C_application/range_analysis/precision_analysis.csv
@@ -42,6 +40,13 @@ C_application/evaluation/summary.json
 C_application/evaluation/results_float.csv
 C_application/evaluation/results_fxp.csv
 C_application/evaluation/comparison_float_vs_fxp.json
+C_application/evaluation/fxp/__pycache__/
+C_application/evaluation/fxp/*.dSYM/
+C_application/evaluation/fxp/fxp_stage_harness
+C_application/evaluation/fxp/.fxp_stage_harness.build.lock
+C_application/evaluation/fxp/twiddle_precision_cases.csv
+C_application/evaluation/fxp/twiddle_precision_summary.csv
+C_application/evaluation/fxp/baselines/
 
 # Range analysis output and scripts (FxP-Port branch only keeps the header)
 C_application/range_analysis/*.csv
@@ -59,7 +64,6 @@ C_application/OVERLEAF.md
 C_application/test/
 !C_application/test/
 C_application/test/*
-!C_application/test/kissfft_twiddle_harness.c
 !C_application/test/fxp_audio_fft_regression.c
 !C_application/test/fxp_audio_periodogram_regression.c
 !C_application/test/fxp_audio_mel_regression.c

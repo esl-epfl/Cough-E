@@ -1,11 +1,13 @@
 #include <stdlib.h>
 #include <string.h>
+#include <stdio.h>
 
 #include <feature_extraction.h>
 #include <audio_features.h>
 #include <imu_features.h>
 
 #include <audio/audio_pipeline_fxp.h>
+#include <core/cough_backend.h>
 #include <core/fxp_convert.h>
 #include <core/fxp_core.h>
 #include <imu/imu_pipeline.h>
@@ -22,7 +24,7 @@ typedef struct {
 
 /*
  * EEPD band [50, 100] and shared envelope low-pass stage in Q30.
- * This is the only EEPD bin currently selected by the feature selector.
+ * Kept as a compatibility kernel when EEPD(0) is requested.
  */
 static const fxp_iir2_q30_t k_eepd_band0_q30 = {
     .b = {10439284, 0, -10439284},
@@ -42,6 +44,107 @@ static int _is_required(const int8_t *features_selector, uint16_t start_index, u
         if (features_selector[i] == 1) return 1;
     }
     return 0;
+}
+
+static int _validate_audio_selector_fxp(const int8_t *features_selector)
+{
+    static const uint16_t k_float_only_audio[] = {
+        SPECTRAL_DECREASE,
+        SPECTRAL_SLOPE,
+        SPECTRAL_SKEW,
+        SPECTRAL_STD,
+        SPECTRAL_ENTROPY,
+    };
+
+    for (size_t i = 0; i < (sizeof(k_float_only_audio) / sizeof(k_float_only_audio[0])); i++) {
+        uint16_t idx = k_float_only_audio[i];
+        if (features_selector[idx] == 1) {
+            fprintf(stderr,
+                    "FXP audio runtime: selected feature index %u is float-only.\n",
+                    (unsigned)idx);
+            return 0;
+        }
+    }
+
+    for (uint16_t idx = (uint16_t)(ENERGY_ENVELOPE_PEAK_DETECT + 1);
+         idx < (uint16_t)(ENERGY_ENVELOPE_PEAK_DETECT + N_EEPD);
+         idx++) {
+        if (features_selector[idx] == 1) {
+            fprintf(stderr,
+                    "FXP audio runtime: selected EEPD feature index %u is float-only.\n",
+                    (unsigned)idx);
+            return 0;
+        }
+    }
+
+    return 1;
+}
+
+static int _imu_local_feat_supported_raw(uint16_t local_feat)
+{
+    if (local_feat == LINE_LENGTH) return 1;
+    if (local_feat == ZERO_CROSSING_RATE_IMU) return 1;
+    if (local_feat == KURTOSIS) return 1;
+    if (local_feat == ROOT_MEANS_SQUARED_IMU) return 1;
+    if (local_feat >= APPROXIMATE_ZERO_CROSSING && local_feat < Num_imu_feat_families) return 1;
+    return 0;
+}
+
+static int _imu_local_feat_supported_l2a(uint16_t local_feat)
+{
+    if (local_feat == ROOT_MEANS_SQUARED_IMU) return 1;
+    if (local_feat >= APPROXIMATE_ZERO_CROSSING && local_feat < Num_imu_feat_families) return 1;
+    return 0;
+}
+
+static int _imu_local_feat_supported_l2g(uint16_t local_feat)
+{
+    if (local_feat == LINE_LENGTH) return 1;
+    if (local_feat == ROOT_MEANS_SQUARED_IMU) return 1;
+    if (local_feat == CREST_FACTOR_IMU) return 1;
+    if (local_feat >= APPROXIMATE_ZERO_CROSSING && local_feat < Num_imu_feat_families) return 1;
+    return 0;
+}
+
+static int _validate_imu_selector_fxp(const int8_t *features_selector)
+{
+    static const int8_t k_raw_bases[] = {
+        ACCEL_X_FEAT, ACCEL_Y_FEAT, ACCEL_Z_FEAT,
+        GYRO_Y_FEAT, GYRO_P_FEAT, GYRO_R_FEAT,
+    };
+
+    for (size_t s = 0; s < (sizeof(k_raw_bases) / sizeof(k_raw_bases[0])); s++) {
+        uint16_t base = (uint16_t)k_raw_bases[s];
+        for (uint16_t local = 0; local < Num_imu_feat_families; local++) {
+            uint16_t idx = (uint16_t)(base + local);
+            if (features_selector[idx] == 1 && !_imu_local_feat_supported_raw(local)) {
+                fprintf(stderr,
+                        "FXP IMU runtime: selected raw feature index %u is float-only.\n",
+                        (unsigned)idx);
+                return 0;
+            }
+        }
+    }
+
+    for (uint16_t local = 0; local < Num_imu_feat_families; local++) {
+        uint16_t idx_l2a = (uint16_t)(ACCEL_COMBO + local);
+        if (features_selector[idx_l2a] == 1 && !_imu_local_feat_supported_l2a(local)) {
+            fprintf(stderr,
+                    "FXP IMU runtime: selected accel-combo feature index %u is float-only.\n",
+                    (unsigned)idx_l2a);
+            return 0;
+        }
+
+        uint16_t idx_l2g = (uint16_t)(GYRO_COMBO + local);
+        if (features_selector[idx_l2g] == 1 && !_imu_local_feat_supported_l2g(local)) {
+            fprintf(stderr,
+                    "FXP IMU runtime: selected gyro-combo feature index %u is float-only.\n",
+                    (unsigned)idx_l2g);
+            return 0;
+        }
+    }
+
+    return 1;
 }
 
 static inline int32_t _mul_q30(int32_t a_q30, int32_t b_q30)
@@ -212,6 +315,70 @@ static fxp_q16_t _compute_eepd0_q16(const int16_t *sig_q14, int16_t len)
     return fxp_q16_from_int((int32_t)n_peaks);
 }
 
+static void _audio_mean_features_q16_from_q14(const int8_t *features_selector,
+                                              const int16_t *sig_q14,
+                                              int16_t len,
+                                              fxp_q16_t *feats_q16)
+{
+    int need_mean = features_selector[ZERO_CROSSING_RATE]
+                 || features_selector[ROOT_MEANS_SQUARED]
+                 || features_selector[CREST_FACTOR];
+    if (!need_mean || len <= 0) return;
+
+    int64_t sum_q14 = 0;
+    for (int16_t i = 0; i < len; i++) {
+        sum_q14 += (int64_t)sig_q14[i];
+    }
+
+    int32_t mean_q14;
+    if (sum_q14 >= 0) {
+        mean_q14 = (int32_t)((sum_q14 + (len / 2)) / len);
+    } else {
+        mean_q14 = (int32_t)(-(((-sum_q14) + (len / 2)) / len));
+    }
+
+    int32_t prev = (int32_t)sig_q14[0] - mean_q14;
+    int32_t max_v = prev;
+    uint64_t sum_sq_q28 = (uint64_t)((int64_t)prev * (int64_t)prev);
+    uint32_t crossings = 0U;
+
+    for (int16_t i = 1; i < len; i++) {
+        int32_t cur = (int32_t)sig_q14[i] - mean_q14;
+
+        if ((prev < 0 && cur > 0) || (prev > 0 && cur < 0)) {
+            crossings++;
+        }
+
+        if (cur > max_v) max_v = cur;
+
+        sum_sq_q28 += (uint64_t)((int64_t)cur * (int64_t)cur);
+        prev = cur;
+    }
+
+    if (features_selector[ZERO_CROSSING_RATE]) {
+        uint32_t zcr_q16 = (len > 1)
+            ? fxp_uq0_16_ratio(crossings, (uint32_t)(len - 1))
+            : 0U;
+        feats_q16[ZERO_CROSSING_RATE] = fxp_q16_from_u32(zcr_q16, 16U);
+    }
+
+    if (features_selector[ROOT_MEANS_SQUARED] || features_selector[CREST_FACTOR]) {
+        uint64_t mean_sq_q28 = (sum_sq_q28 + ((uint64_t)len >> 1U)) / (uint64_t)len;
+        int32_t rms_q14 = (int32_t)fxp_sat_u32_from_u64(fxp_sqrt64(mean_sq_q28));
+
+        if (features_selector[ROOT_MEANS_SQUARED]) {
+            feats_q16[ROOT_MEANS_SQUARED] = fxp_q16_from_s32(rms_q14, FXP_FRAC_AUDIO_INPUT);
+        }
+
+        if (features_selector[CREST_FACTOR]) {
+            int32_t crest_q16 = (rms_q14 > 0)
+                ? fxp_div_s32(max_v, rms_q14, FXP_PIPE_FRAC)
+                : 0;
+            feats_q16[CREST_FACTOR] = crest_q16;
+        }
+    }
+}
+
 void audio_features_fxp_q16_from_q14(const int8_t *features_selector,
                                      const int16_t *sig_q14,
                                      int16_t len,
@@ -219,10 +386,13 @@ void audio_features_fxp_q16_from_q14(const int8_t *features_selector,
                                      fxp_q16_t *feats_q16)
 {
     if (!features_selector || !sig_q14 || !feats_q16 || len <= 0 || fs <= 0) return;
+    if (!_validate_audio_selector_fxp(features_selector)) abort();
 
     fxp_audio_fft_features_from_q14(features_selector, sig_q14, len, fs, feats_q16);
     fxp_audio_periodogram_features_from_q14(features_selector, sig_q14, len, fs, feats_q16);
+    (void)fs;
     fxp_audio_mel_features_from_q14(features_selector, sig_q14, len, feats_q16);
+    _audio_mean_features_q16_from_q14(features_selector, sig_q14, len, feats_q16);
 
     if (features_selector[ENERGY_ENVELOPE_PEAK_DETECT]) {
         feats_q16[ENERGY_ENVELOPE_PEAK_DETECT] = _compute_eepd0_q16(sig_q14, len);
@@ -317,7 +487,7 @@ void audio_features_fxp_q16(const int8_t *features_selector, const float *sig, i
 
     /* Single allowed float->FxP conversion boundary for audio input carriers. */
     for (int16_t i = 0; i < len; i++) {
-        sig_q14[i] = FXP_AUDIO_FROM_FLOAT(sig[i]);
+        sig_q14[i] = cough_source_audio_sample(sig[i]);
     }
 
     audio_features_fxp_q16_from_q14(features_selector, sig_q14, len, fs, feats_q16);
@@ -330,6 +500,7 @@ void imu_features_fxp_q16_from_raw(const int8_t *features_selector,
                                    fxp_q16_t *feats_q16)
 {
     if (!features_selector || !sig_raw || !feats_q16 || len <= 0) return;
+    if (!_validate_imu_selector_fxp(features_selector)) abort();
     _imu_features_fxp_q16_from_raw_impl(features_selector, sig_raw, len, feats_q16);
 }
 
@@ -350,12 +521,12 @@ void imu_features_fxp_q16(const int8_t *features_selector, const float sig[][Num
 
     for (int16_t i = 0; i < len; i++) {
         /* Single allowed float->FxP conversion boundary for IMU input carriers. */
-        raw_fxp[i][0] = FXP_IMU_RAW_FROM_FLOAT(sig[i][0]);
-        raw_fxp[i][1] = FXP_IMU_RAW_FROM_FLOAT(sig[i][1]);
-        raw_fxp[i][2] = FXP_IMU_RAW_FROM_FLOAT(sig[i][2]);
-        raw_fxp[i][3] = FXP_IMU_RAW_FROM_FLOAT(sig[i][3]);
-        raw_fxp[i][4] = FXP_IMU_RAW_FROM_FLOAT(sig[i][4]);
-        raw_fxp[i][5] = FXP_IMU_RAW_FROM_FLOAT(sig[i][5]);
+        raw_fxp[i][0] = cough_source_imu_sample(sig[i][0]);
+        raw_fxp[i][1] = cough_source_imu_sample(sig[i][1]);
+        raw_fxp[i][2] = cough_source_imu_sample(sig[i][2]);
+        raw_fxp[i][3] = cough_source_imu_sample(sig[i][3]);
+        raw_fxp[i][4] = cough_source_imu_sample(sig[i][4]);
+        raw_fxp[i][5] = cough_source_imu_sample(sig[i][5]);
     }
 
     _imu_features_fxp_q16_from_raw_impl(features_selector, raw_fxp, len, feats_q16);

@@ -3,6 +3,7 @@
 
 #include <inttypes.h>
 
+#include <core/cough_backend.h>
 #include <audio_features.h>
 #include <bio_features.h>
 

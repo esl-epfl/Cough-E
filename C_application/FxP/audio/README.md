@@ -16,7 +16,7 @@ Current contents:
 
 Latest regression snapshot (`2026-04-20`):
 
-- command: `python C_application/evaluation/evaluate.py error-audio-psd --kissfft-fixed 32`
+- replacement command: `python C_application/evaluation/fxp/fxp_harness.py --twiddle 32 block`
 - `N=14306` for all kernels
 
 | Kernel | RMSE | RelRMSE | MaxAbs |
@@ -29,7 +29,7 @@ Latest regression snapshot (`2026-04-20`):
 
 Latest Mel regression snapshot (`2026-04-20`):
 
-- command: `python C_application/evaluation/evaluate.py error-audio-mel --kissfft-fixed 32`
+- replacement command: `python C_application/evaluation/fxp/fxp_harness.py --twiddle 32 block`
 - `N=915584` for all kernels
 
 | Kernel | RMSE | RelRMSE | MaxAbs |
@@ -41,7 +41,7 @@ Latest Mel regression snapshot (`2026-04-20`):
 
 Latest Mel isolated sanity snapshot after FxP precision fixes (`2026-04-20`):
 
-- command: `python C_application/private/test/regression.py error-audio-mel --kissfft-fixed 32`
+- command: `python C_application/evaluation/fxp/fxp_harness.py --twiddle 32 single-kernel`
 - `N=320` per kernel (synthetic suite)
 
 | Kernel | RMSE | RelRMSE | MaxAbs |
@@ -53,7 +53,7 @@ Latest Mel isolated sanity snapshot after FxP precision fixes (`2026-04-20`):
 
 Latest ML snapshot after periodogram port (`2026-04-20`):
 
-- run context: FxP evaluation (`--fxp --kissfft-fixed 32`)
+- run context: FxP evaluation (`--mode fxp --twiddle 32`)
 - dataset coverage: `594 recordings` (`1.688 hrs`)
 - overall metrics:
   - `SE=0.5892`
@@ -67,7 +67,7 @@ Latest ML snapshot after periodogram port (`2026-04-20`):
 
 Latest ML snapshot with full FxP feature pipeline (`2026-04-20`):
 
-- run context: FxP evaluation (`--fxp --kissfft-fixed 32`)
+- run context: FxP evaluation (`--mode fxp --twiddle 32`)
 - dataset coverage: `594 recordings` (`1.688 hrs`)
 - overall metrics:
   - `SE=0.5819`
@@ -88,11 +88,11 @@ Latest ML snapshot with full FxP feature pipeline (`2026-04-20`):
 ML execution in FxP mode:
 
 - command:
-  - `python C_application/evaluation/evaluate.py run --fxp --kissfft-fixed 32`
+  - `python C_application/evaluation/evaluate.py --mode fxp --twiddle 32`
 - compile flags injected by `evaluate.py`:
   - `-DFXP_MODE -DFIXED_POINT=32`
 - safety default:
-  - if `--fxp` is set and `--kissfft-fixed` is omitted in `run`/`compare`, `evaluate.py` now defaults to `-DFIXED_POINT=32`.
+  - if `--mode fxp` is set and `--twiddle` is omitted, `evaluate.py` defaults to `-DFIXED_POINT=32`.
 - audio block behavior in this mode:
   - FFT block dispatch (`fxp_audio_fft_features_from_q14`) is active for selected FFT kernels.
   - Periodogram block dispatch (`fxp_audio_periodogram_features_from_q14`) is active for selected PSD kernels.
