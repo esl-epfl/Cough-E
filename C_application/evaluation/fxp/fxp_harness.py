@@ -512,13 +512,6 @@ def cmd_audit(args: argparse.Namespace) -> int:
         (C_APP_DIR / "Src" / "postprocessing.c", "#ifdef FXP_MODE", "#else"),
     ]
 
-    allowed = {
-        "feature_extraction_fxp.c": (
-            "audio_features_fxp_q16(const int8_t *features_selector, const float *sig",
-            "imu_features_fxp_q16(const int8_t *features_selector, const float sig",
-        )
-    }
-
     failures: list[str] = []
     for path, start, end in checks:
         text = audit_slice(path, start, end)
@@ -526,8 +519,6 @@ def cmd_audit(args: argparse.Namespace) -> int:
             if not banned.search(line):
                 continue
             if "float-only" in line:
-                continue
-            if any(token in line for token in allowed.get(path.name, ())):
                 continue
             failures.append(f"{path.relative_to(C_APP_DIR)}:{lineno}: {line.strip()}")
 

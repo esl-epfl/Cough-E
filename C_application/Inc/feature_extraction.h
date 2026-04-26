@@ -37,14 +37,4 @@ void imu_features(const int8_t *features_selector,
                   int16_t len,
                   feat_t *feats);
 
-#ifdef FXP_MODE
-/* Explicit FxP entrypoints retained during migration compatibility. */
-void audio_features_fxp_q16_from_q14(const int8_t *features_selector, const int16_t *sig_q14, int16_t len, int16_t fs, fxp_q16_t *feats_q16);
-void imu_features_fxp_q16_from_raw(const int8_t *features_selector, const q11_5_t sig_raw[][Num_IMU_signals], int16_t len, fxp_q16_t *feats_q16);
-
-/* Legacy float-input wrappers: conversion boundary from source inputs into FxP carriers. */
-void audio_features_fxp_q16(const int8_t *features_selector, const float *sig, int16_t len, int16_t fs, fxp_q16_t *feats_q16);
-void imu_features_fxp_q16(const int8_t *features_selector, const float sig[][Num_IMU_signals], int16_t len, fxp_q16_t *feats_q16);
-#endif
-
 #endif

@@ -6,18 +6,27 @@
 /* Defines of the hyperparameters of audio features extraction */
 
 
-#define WIND_LEN_AUD    0.8
+#define WIND_LEN_AUD_NUM 4U
+#define WIND_LEN_AUD_DEN 5U
+#ifndef FXP_MODE
+#define WIND_LEN_AUD    ((float)WIND_LEN_AUD_NUM / (float)WIND_LEN_AUD_DEN)
+#endif
 #define OVERLAP_AUD     50  
 
 // audio samples in a window
-#define WINDOW_SAMP_AUDIO   (int16_t)(WIND_LEN_AUD * AUDIO_FS)
+#define WINDOW_SAMP_AUDIO   ((int16_t)(((uint32_t)AUDIO_FS * WIND_LEN_AUD_NUM) / WIND_LEN_AUD_DEN))
 
-#define OVERLAP_SAMP        (int16_t)(WINDOW_SAMP_AUDIO * OVERLAP_AUD / 100.0)
-#define AUDIO_STEP          (int16_t)(WINDOW_SAMP_AUDIO * (1.0 - (OVERLAP_AUD / 100.0)))
+#define OVERLAP_SAMP        ((int16_t)(((uint32_t)WINDOW_SAMP_AUDIO * OVERLAP_AUD) / 100U))
+#define AUDIO_STEP          ((int16_t)(WINDOW_SAMP_AUDIO - OVERLAP_SAMP))
 #define N_OVERLAPS          (int16_t)(WINDOW_SAMP_AUDIO / AUDIO_STEP - 1)
 
+#define AUDIO_WINDOW_TICKS  ((uint32_t)WINDOW_SAMP_AUDIO)
+#define AUDIO_STEP_TICKS    ((uint32_t)AUDIO_STEP)
+
+#ifndef FXP_MODE
 #define AUDIO_OVERLAP_SEC   (float)(WIND_LEN_AUD * (OVERLAP_AUD / 100.0))
 #define AUDIO_STEP_SEC      (float)(WIND_LEN_AUD  - AUDIO_OVERLAP_SEC)
+#endif
 
 
 // Number of MFCCs to extract, this number of feature per each family

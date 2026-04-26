@@ -2,77 +2,6 @@
 #include <stdlib.h>
 
 #include <imu/imu_pipeline.h>
-#include <helpers.h>
-#include <time_domain_feat.h>
-#include <azc.h>
-
-typedef void (*imu_kernel_fn)(const imu_sig_view_t *sig, float *out, float param);
-
-typedef struct {
-    uint8_t feature_idx;
-    imu_kernel_fn fn;
-    float param;
-} imu_kernel_desc_t;
-
-/* -------------------------------------------------------------------------- */
-/*  Float kernels (legacy/non-FxP path)                                       */
-/* -------------------------------------------------------------------------- */
-
-static void kern_float_line_length(const imu_sig_view_t *sig, float *out, float param)
-{
-    (void)param;
-    *out = get_line_length((float *)sig->data.float_data, sig->len);
-}
-
-static void kern_float_zcr(const imu_sig_view_t *sig, float *out, float param)
-{
-    (void)param;
-    *out = compute_zrc((float *)sig->data.float_data, sig->len);
-}
-
-static void kern_float_kurtosis(const imu_sig_view_t *sig, float *out, float param)
-{
-    (void)param;
-    *out = get_kurtosis((float *)sig->data.float_data, sig->len);
-}
-
-static void kern_float_rms(const imu_sig_view_t *sig, float *out, float param)
-{
-    (void)param;
-    *out = get_rms((float *)sig->data.float_data, sig->len);
-}
-
-static void kern_float_crest(const imu_sig_view_t *sig, float *out, float param)
-{
-    (void)param;
-    float rms = get_rms((float *)sig->data.float_data, sig->len);
-    float peak = get_max((float *)sig->data.float_data, sig->len);
-    *out = (rms > 0.0f) ? (peak / rms) : 0.0f;
-}
-
-static void kern_float_azc(const imu_sig_view_t *sig, float *out, float param)
-{
-    *out = (float)azc_computation((float *)sig->data.float_data, sig->len, param);
-}
-
-#define AZC_IDX(i) ((uint8_t)(APPROXIMATE_ZERO_CROSSING + (i)))
-#define AZC_EPS(i) ((float)(EPSILON_START + (EPSILON_STEP * (i))))
-
-static const imu_kernel_desc_t k_float_table[] = {
-    {LINE_LENGTH, kern_float_line_length, 0.0f},
-    {ZERO_CROSSING_RATE_IMU, kern_float_zcr, 0.0f},
-    {KURTOSIS, kern_float_kurtosis, 0.0f},
-    {ROOT_MEANS_SQUARED_IMU, kern_float_rms, 0.0f},
-    {CREST_FACTOR_IMU, kern_float_crest, 0.0f},
-    {AZC_IDX(0), kern_float_azc, AZC_EPS(0)},
-    {AZC_IDX(1), kern_float_azc, AZC_EPS(1)},
-    {AZC_IDX(2), kern_float_azc, AZC_EPS(2)},
-    {AZC_IDX(3), kern_float_azc, AZC_EPS(3)},
-    {AZC_IDX(4), kern_float_azc, AZC_EPS(4)},
-    {AZC_IDX(5), kern_float_azc, AZC_EPS(5)},
-    {AZC_IDX(6), kern_float_azc, AZC_EPS(6)},
-    {AZC_IDX(7), kern_float_azc, AZC_EPS(7)},
-};
 
 #ifdef FXP_MODE
 
@@ -80,108 +9,102 @@ static const imu_kernel_desc_t k_float_table[] = {
 /*  FxP kernels                                                               */
 /* -------------------------------------------------------------------------- */
 
-static inline uint64_t fxp_shift_u64(uint64_t value, int shift)
+#define FXP_KURT_FISHER_Q34_30 ((int64_t)3 << FXP_FRAC_IMU_KURTOSIS_RAW)
+
+static inline uq2_14_t _cf_l2g_result(uq5_11_t peak, uq7_9_t rms)
+{
+    if (rms == 0) return 0;
+    return (uq2_14_t)(((uint32_t)peak << 12) / (uint32_t)rms);
+}
+
+static inline uq0_16_t _zcr_raw_q16(const q11_5_t *sig, int16_t len)
+{
+    if (len <= 1) return 0U;
+
+    int crossings = 0;
+    for (int16_t i = 0; i < len - 1; i++) {
+        if ((sig[i] ^ sig[i + 1]) < 0) crossings++;
+    }
+    return (uq0_16_t)fxp_uq0_16_ratio((uint32_t)crossings, (uint32_t)(len - 1));
+}
+
+static inline uint64_t _shift_u64(uint64_t value, int shift)
 {
     return (shift >= 0) ? (value << shift) : (value >> (-shift));
 }
 
-static inline uint32_t fxp_shift_u32(uint32_t value, int shift)
+static int32_t _sample_as_s32(const void *sig, int16_t idx, uint8_t width_bits, uint8_t is_signed)
 {
-    return (shift >= 0) ? (value << shift) : (value >> (-shift));
+    if (width_bits == 16U) {
+        return is_signed
+            ? (int32_t)((const int16_t *)sig)[idx]
+            : (int32_t)((const uint16_t *)sig)[idx];
+    }
+    return is_signed
+        ? ((const int32_t *)sig)[idx]
+        : (int32_t)((const uint32_t *)sig)[idx];
 }
 
-uq16_16_t fxp_get_rms_raw(const q11_5_t *sig, int16_t len)
+static uint32_t _rms(const void *sig, int16_t len,
+                        uint8_t width_bits, uint8_t is_signed,
+                        uint8_t pre_square_shift, int8_t post_mean_shift,
+                        uint8_t result_bits)
 {
     if (len <= 0) return 0;
 
-    uint64_t sum = 0;
+    uint64_t sum64 = 0;
+    uint32_t sum32 = 0;
     for (int16_t i = 0; i < len; i++) {
-        uint32_t sq = (uint32_t)fxp_mul_s32((int32_t)sig[i], (int32_t)sig[i]);
-        sum += (uint64_t)sq;
+        int32_t sample = _sample_as_s32(sig, i, width_bits, is_signed);
+        uint32_t sq = is_signed
+            ? (uint32_t)fxp_mul_s32(sample, sample)
+            : fxp_mul_u32((uint32_t)sample, (uint32_t)sample);
+        sq >>= pre_square_shift;
+        if (result_bits > 16U) {
+            sum64 += (uint64_t)sq;
+        } else {
+            sum32 += sq;
+        }
     }
 
-    uint64_t mean = sum / (uint64_t)len;
-    uint64_t shifted = fxp_shift_u64(mean, 22);
-    return (uq16_16_t)fxp_sat_u32_from_u64(fxp_sqrt64(shifted));
-}
-
-uq13_3_t fxp_get_rms_l2a(const uq10_6_t *sig, int16_t len)
-{
-    if (len <= 0) return 0;
-
-    uint32_t sum = 0;
-    for (int16_t i = 0; i < len; i++) {
-        uint32_t sq = fxp_mul_u32((uint32_t)sig[i], (uint32_t)sig[i]);
-        sum += (sq >> 5);
+    if (result_bits > 16U) {
+        uint64_t mean = sum64 / (uint64_t)len;
+        uint64_t shifted = _shift_u64(mean, post_mean_shift);
+        return fxp_sat_u32_from_u64(fxp_sqrt64(shifted));
     }
 
-    uint32_t mean = sum / (uint32_t)len;
-    uint32_t shifted = fxp_shift_u32(mean, -1);
-    return (uq13_3_t)fxp_sat_u16_from_u32(fxp_sqrt32(shifted));
+    uint32_t mean = sum32 / (uint32_t)len;
+    uint32_t shifted = (uint32_t)_shift_u64(mean, post_mean_shift);
+    return fxp_sat_u16_from_u32(fxp_sqrt32(shifted));
 }
 
-uq7_9_t fxp_get_rms_l2g(const uq5_11_t *sig, int16_t len)
-{
-    if (len <= 0) return 0;
-
-    uint32_t sum = 0;
-    for (int16_t i = 0; i < len; i++) {
-        uint32_t sq = fxp_mul_u32((uint32_t)sig[i], (uint32_t)sig[i]);
-        sum += (sq >> 3);
-    }
-
-    uint32_t mean = sum / (uint32_t)len;
-    uint32_t shifted = fxp_shift_u32(mean, -1);
-    return (uq7_9_t)fxp_sat_u16_from_u32(fxp_sqrt32(shifted));
-}
-
-static inline uint32_t fxp_linelen_diff_to_accum(int32_t diff, uint8_t sr)
-{
-    return ((uint32_t)fxp_abs_s32(diff)) >> sr;
-}
-
-static inline uint32_t fxp_linelen_result(uint32_t accum, int16_t denom_len, uint8_t sl)
-{
-    if (denom_len <= 0) return 0;
-    return (uint32_t)(((uint64_t)accum << sl) / (uint32_t)denom_len);
-}
-
-uq9_23_t fxp_get_line_length_raw(const q11_5_t *sig, int16_t len)
+static uint32_t _line_length(const void *sig, int16_t len,
+                                uint8_t width_bits, uint8_t is_signed,
+                                uint8_t diff_shift, uint8_t result_shift)
 {
     if (len <= 1) return 0;
 
     uint32_t accum = 0;
     for (int16_t i = 0; i < len - 1; i++) {
-        int32_t diff = (int32_t)sig[i + 1] - (int32_t)sig[i];
-        accum += fxp_linelen_diff_to_accum(diff, 0);
+        int32_t a = _sample_as_s32(sig, i + 1, width_bits, is_signed);
+        int32_t b = _sample_as_s32(sig, i, width_bits, is_signed);
+        accum += ((uint32_t)fxp_abs_s32(a - b)) >> diff_shift;
     }
-    return (uq9_23_t)fxp_linelen_result(accum, len - 1, 18);
+    return (uint32_t)(((uint64_t)accum << result_shift) / (uint32_t)(len - 1));
 }
 
-uq7_9_t fxp_get_line_length_l2g(const uq5_11_t *sig, int16_t len)
-{
-    if (len <= 1) return 0;
-
-    uint32_t accum = 0;
-    for (int16_t i = 0; i < len - 1; i++) {
-        int32_t diff = (int32_t)sig[i + 1] - (int32_t)sig[i];
-        accum += fxp_linelen_diff_to_accum(diff, 2);
-    }
-    return (uq7_9_t)fxp_sat_u16_from_u32(fxp_linelen_result(accum, len - 1, 0));
-}
-
-static inline int32_t fxp_kurt_mean_q10(int32_t accum_q5, int16_t n)
+static inline int32_t _kurt_mean(int32_t accum_q5, int16_t n)
 {
     if (n <= 0) return 0;
     return (accum_q5 * 32) / (int32_t)n;
 }
 
-static inline int16_t fxp_kurt_centred_q5(q11_5_t sample_q5, int32_t mean_q10)
+static inline int16_t _kurt_centered(q11_5_t sample_q5, int32_t mean_q10)
 {
     return (int16_t)((((int32_t)sample_q5 * 32) - mean_q10 + 16) >> 5);
 }
 
-q34_30_t fxp_get_kurtosis_raw(const q11_5_t *sig, int16_t len)
+static q34_30_t _kurtosis_raw(const q11_5_t *sig, int16_t len)
 {
     if (len <= 0) return 0;
 
@@ -189,11 +112,11 @@ q34_30_t fxp_get_kurtosis_raw(const q11_5_t *sig, int16_t len)
     for (int16_t i = 0; i < len; i++) {
         sum_mean += (int32_t)sig[i];
     }
-    int32_t mean_q10 = fxp_kurt_mean_q10(sum_mean, len);
+    int32_t mean_q10 = _kurt_mean(sum_mean, len);
 
     uint64_t sum_var = 0;
     for (int16_t i = 0; i < len; i++) {
-        int16_t centered = fxp_kurt_centred_q5(sig[i], mean_q10);
+        int16_t centered = _kurt_centered(sig[i], mean_q10);
         uint32_t c2_q10 = (uint32_t)fxp_mul_s32(centered, centered);
         sum_var += ((uint64_t)c2_q10 << 12);
     }
@@ -208,7 +131,7 @@ q34_30_t fxp_get_kurtosis_raw(const q11_5_t *sig, int16_t len)
 
     uint64_t sum_x4 = 0;
     for (int16_t i = 0; i < len; i++) {
-        int16_t centered = fxp_kurt_centred_q5(sig[i], mean_q10);
+        int16_t centered = _kurt_centered(sig[i], mean_q10);
         uint64_t c2 = (uint64_t)fxp_mul_s32(centered, centered);
         sum_x4 += fxp_mul_u64(c2, c2);
     }
@@ -221,7 +144,7 @@ q34_30_t fxp_get_kurtosis_raw(const q11_5_t *sig, int16_t len)
     return normalized - FXP_KURT_FISHER_Q34_30;
 }
 
-uq5_11_t fxp_get_max_l2g(const uq5_11_t *sig, int16_t len)
+static uq5_11_t _max_l2g(const uq5_11_t *sig, int16_t len)
 {
     if (len <= 0) return 0;
 
@@ -232,7 +155,7 @@ uq5_11_t fxp_get_max_l2g(const uq5_11_t *sig, int16_t len)
     return max;
 }
 
-uq10_6_t fxp_l2_norm_accel_from_raw(q11_5_t ax, q11_5_t ay, q11_5_t az)
+uq10_6_t imu_l2_norm_accel_from_raw(q11_5_t ax, q11_5_t ay, q11_5_t az)
 {
     uint32_t sum = (uint32_t)fxp_mul_s32(ax, ax)
                  + (uint32_t)fxp_mul_s32(ay, ay)
@@ -241,7 +164,7 @@ uq10_6_t fxp_l2_norm_accel_from_raw(q11_5_t ax, q11_5_t ay, q11_5_t az)
     return (uq10_6_t)fxp_sat_u16_from_u32(fxp_sqrt32(sum << 2));
 }
 
-uq5_11_t fxp_l2_norm_gyro_from_raw(q11_5_t gx, q11_5_t gy, q11_5_t gz)
+uq5_11_t imu_l2_norm_gyro_from_raw(q11_5_t gx, q11_5_t gy, q11_5_t gz)
 {
     uint32_t sum = (uint32_t)fxp_mul_s32(gx, gx)
                  + (uint32_t)fxp_mul_s32(gy, gy)
@@ -253,14 +176,14 @@ uq5_11_t fxp_l2_norm_gyro_from_raw(q11_5_t gx, q11_5_t gy, q11_5_t gz)
 typedef struct {
     int16_t first;
     int16_t last;
-} fxp_azc_segment_t;
+} azc_segment_t;
 
-static inline int32_t fxp_azc_diff(int32_t a, int32_t b, int16_t gap)
+static inline int32_t _azc_diff(int32_t a, int32_t b, int16_t gap)
 {
     return (gap == 0) ? 0 : (b - a) / (int32_t)gap;
 }
 
-static void fxp_azc_interp(int16_t len, int16_t xf, int32_t yf,
+static void _azc_interp(int16_t len, int16_t xf, int32_t yf,
                            int16_t xl, int32_t yl, int32_t *res)
 {
     res[0] = yf;
@@ -273,7 +196,7 @@ static void fxp_azc_interp(int16_t len, int16_t xf, int32_t yf,
     }
 }
 
-static uint32_t fxp_azc_max_vdist(const int32_t *sig, int16_t first,
+static uint32_t _azc_max_vdist(const int32_t *sig, int16_t first,
                                   int16_t last, int16_t *idx)
 {
     if (first == last) {
@@ -288,7 +211,7 @@ static uint32_t fxp_azc_max_vdist(const int32_t *sig, int16_t first,
         return 0;
     }
 
-    fxp_azc_interp(len, first, sig[first], last, sig[last], intrp);
+    _azc_interp(len, first, sig[first], last, sig[last], intrp);
 
     uint32_t max_dist = 0;
     *idx = first;
@@ -304,11 +227,11 @@ static uint32_t fxp_azc_max_vdist(const int32_t *sig, int16_t first,
     return max_dist;
 }
 
-static int16_t *fxp_azc_polygonal_approx(const int32_t *sig, int16_t len,
+static int16_t *_azc_polygonal_approx(const int32_t *sig, int16_t len,
                                          uint32_t eps_fxp, int16_t *res_len)
 {
     int16_t *res = (int16_t *)malloc((size_t)len * sizeof(int16_t));
-    fxp_azc_segment_t *stack = (fxp_azc_segment_t *)malloc((size_t)len * sizeof(fxp_azc_segment_t));
+    azc_segment_t *stack = (azc_segment_t *)malloc((size_t)len * sizeof(azc_segment_t));
     if (res == NULL || stack == NULL) {
         free(res);
         free(stack);
@@ -327,7 +250,7 @@ static int16_t *fxp_azc_polygonal_approx(const int32_t *sig, int16_t len,
         next--;
 
         int16_t mid;
-        uint32_t max_dist = fxp_azc_max_vdist(sig, first, last, &mid);
+        uint32_t max_dist = _azc_max_vdist(sig, first, last, &mid);
 
         if (max_dist > eps_fxp) {
             stack[next + 1].first = first;
@@ -354,29 +277,29 @@ static int16_t *fxp_azc_polygonal_approx(const int32_t *sig, int16_t len,
     return res;
 }
 
-static int fxp_azc_qsort_cmp(const void *a, const void *b)
+static int _azc_qsort_cmp(const void *a, const void *b)
 {
     return (int)(*(const int16_t *)a) - (int)(*(const int16_t *)b);
 }
 
-static int16_t fxp_azc_impl(const int32_t *sig, int16_t len, uint32_t eps_fxp)
+static int16_t _azc(const int32_t *sig, int16_t len, uint32_t eps_fxp)
 {
     if (len <= 1) return 0;
 
     int16_t approx_len = 0;
-    int16_t *idxs = fxp_azc_polygonal_approx(sig, len, eps_fxp, &approx_len);
+    int16_t *idxs = _azc_polygonal_approx(sig, len, eps_fxp, &approx_len);
     if (idxs == NULL || approx_len <= 0) {
         free(idxs);
         return 0;
     }
 
-    qsort(idxs, (size_t)approx_len, sizeof(int16_t), fxp_azc_qsort_cmp);
+    qsort(idxs, (size_t)approx_len, sizeof(int16_t), _azc_qsort_cmp);
 
     int16_t azc = 0;
     if (approx_len > 2) {
-        int32_t prev = fxp_azc_diff(sig[idxs[0]], sig[idxs[1]], (int16_t)(idxs[1] - idxs[0]));
+        int32_t prev = _azc_diff(sig[idxs[0]], sig[idxs[1]], (int16_t)(idxs[1] - idxs[0]));
         for (int16_t i = 1; i < approx_len - 1; i++) {
-            int32_t cur = fxp_azc_diff(sig[idxs[i]], sig[idxs[i + 1]], (int16_t)(idxs[i + 1] - idxs[i]));
+            int32_t cur = _azc_diff(sig[idxs[i]], sig[idxs[i + 1]], (int16_t)(idxs[i + 1] - idxs[i]));
             if ((prev > 0 && cur < 0) || (prev < 0 && cur > 0)) azc++;
             prev = cur;
         }
@@ -386,56 +309,22 @@ static int16_t fxp_azc_impl(const int32_t *sig, int16_t len, uint32_t eps_fxp)
     return azc;
 }
 
-int16_t fxp_azc_computation_raw(const q11_5_t *sig, int16_t len, uint32_t epsilon_q5)
+static int16_t _azc_from_signal(const void *sig, int16_t len,
+                                   uint8_t width_bits, uint8_t is_signed,
+                                   uint32_t epsilon_q)
 {
     if (len <= 0) return 0;
 
     int32_t *wide = (int32_t *)malloc((size_t)len * sizeof(int32_t));
     if (wide == NULL) return 0;
 
-    for (int16_t i = 0; i < len; i++) wide[i] = (int32_t)sig[i];
-    int16_t result = fxp_azc_impl(wide, len, epsilon_q5);
+    for (int16_t i = 0; i < len; i++) {
+        wide[i] = _sample_as_s32(sig, i, width_bits, is_signed);
+    }
+    int16_t result = _azc(wide, len, epsilon_q);
     free(wide);
     return result;
 }
-
-int16_t fxp_azc_computation_l2a(const uq10_6_t *sig, int16_t len, uint32_t epsilon_q6)
-{
-    if (len <= 0) return 0;
-
-    int32_t *wide = (int32_t *)malloc((size_t)len * sizeof(int32_t));
-    if (wide == NULL) return 0;
-
-    for (int16_t i = 0; i < len; i++) wide[i] = (int32_t)sig[i];
-    int16_t result = fxp_azc_impl(wide, len, epsilon_q6);
-    free(wide);
-    return result;
-}
-
-int16_t fxp_azc_computation_l2g(const uq5_11_t *sig, int16_t len, uint32_t epsilon_q11)
-{
-    if (len <= 0) return 0;
-
-    int32_t *wide = (int32_t *)malloc((size_t)len * sizeof(int32_t));
-    if (wide == NULL) return 0;
-
-    for (int16_t i = 0; i < len; i++) wide[i] = (int32_t)sig[i];
-    int16_t result = fxp_azc_impl(wide, len, epsilon_q11);
-    free(wide);
-    return result;
-}
-
-/* -------------------------------------------------------------------------- */
-/*  FxP dispatch wrappers                                                      */
-/* -------------------------------------------------------------------------- */
-
-typedef void (*imu_kernel_fn_q16)(const imu_sig_view_t *sig, fxp_q16_t *out, uint32_t param_q);
-
-typedef struct {
-    uint8_t feature_idx;
-    imu_kernel_fn_q16 fn;
-    uint32_t param_q;
-} imu_kernel_desc_q16_t;
 
 /*
  * Quantized epsilon values for AZC thresholds:
@@ -446,182 +335,104 @@ static const uint32_t k_azc_eps_raw_q5[8] = {10U, 13U, 16U, 19U, 22U, 26U, 29U, 
 static const uint32_t k_azc_eps_l2a_q6[8] = {19U, 26U, 32U, 38U, 45U, 51U, 58U, 64U};
 static const uint32_t k_azc_eps_l2g_q11[8] = {614U, 819U, 1024U, 1229U, 1434U, 1638U, 1843U, 2048U};
 
-static void kern_raw_line_length_q16(const imu_sig_view_t *sig, fxp_q16_t *out, uint32_t param_q)
+static void _run_raw_feature(const int8_t *features_selector,
+                             const imu_sig_view_t *sig,
+                             uint8_t local,
+                             fxp_q16_t *out)
 {
-    (void)param_q;
-    *out = fxp_q16_from_u32(fxp_get_line_length_raw(sig->data.raw_data, sig->len), FXP_FRAC_IMU_LINE_LENGTH_RAW);
-}
-
-static void kern_raw_zcr_q16(const imu_sig_view_t *sig, fxp_q16_t *out, uint32_t param_q)
-{
-    (void)param_q;
-    *out = fxp_q16_from_u32(fxp_compute_zcr_raw_q16(sig->data.raw_data, sig->len), 16U);
-}
-
-static void kern_raw_kurtosis_q16(const imu_sig_view_t *sig, fxp_q16_t *out, uint32_t param_q)
-{
-    (void)param_q;
-    *out = fxp_q16_from_s64(fxp_get_kurtosis_raw(sig->data.raw_data, sig->len), FXP_FRAC_IMU_KURTOSIS_RAW);
-}
-
-static void kern_raw_rms_q16(const imu_sig_view_t *sig, fxp_q16_t *out, uint32_t param_q)
-{
-    (void)param_q;
-    *out = fxp_q16_from_u32(fxp_get_rms_raw(sig->data.raw_data, sig->len), FXP_FRAC_IMU_RMS_RAW);
-}
-
-static void kern_raw_azc_q16(const imu_sig_view_t *sig, fxp_q16_t *out, uint32_t param_q)
-{
-    int16_t azc = fxp_azc_computation_raw(sig->data.raw_data, sig->len, param_q);
-    *out = fxp_q16_from_int((int32_t)azc);
-}
-
-static void kern_l2a_rms_q16(const imu_sig_view_t *sig, fxp_q16_t *out, uint32_t param_q)
-{
-    (void)param_q;
-    *out = fxp_q16_from_u32(fxp_get_rms_l2a(sig->data.l2a_data, sig->len), FXP_FRAC_IMU_RMS_L2A);
-}
-
-static void kern_l2a_azc_q16(const imu_sig_view_t *sig, fxp_q16_t *out, uint32_t param_q)
-{
-    int16_t azc = fxp_azc_computation_l2a(sig->data.l2a_data, sig->len, param_q);
-    *out = fxp_q16_from_int((int32_t)azc);
-}
-
-static void kern_l2g_line_length_q16(const imu_sig_view_t *sig, fxp_q16_t *out, uint32_t param_q)
-{
-    (void)param_q;
-    *out = fxp_q16_from_u32(fxp_get_line_length_l2g(sig->data.l2g_data, sig->len), FXP_FRAC_IMU_LINE_LENGTH_L2G);
-}
-
-static void kern_l2g_rms_q16(const imu_sig_view_t *sig, fxp_q16_t *out, uint32_t param_q)
-{
-    (void)param_q;
-    *out = fxp_q16_from_u32(fxp_get_rms_l2g(sig->data.l2g_data, sig->len), FXP_FRAC_IMU_RMS_L2G);
-}
-
-static void kern_l2g_crest_q16(const imu_sig_view_t *sig, fxp_q16_t *out, uint32_t param_q)
-{
-    (void)param_q;
-    uq7_9_t rms = fxp_get_rms_l2g(sig->data.l2g_data, sig->len);
-    uq5_11_t peak = fxp_get_max_l2g(sig->data.l2g_data, sig->len);
-    uq2_14_t cf = (rms > 0U) ? fxp_cf_l2g_result(peak, rms) : 0U;
-    *out = fxp_q16_from_u32((uint32_t)cf, FXP_FRAC_IMU_CREST_L2G);
-}
-
-static void kern_l2g_azc_q16(const imu_sig_view_t *sig, fxp_q16_t *out, uint32_t param_q)
-{
-    int16_t azc = fxp_azc_computation_l2g(sig->data.l2g_data, sig->len, param_q);
-    *out = fxp_q16_from_int((int32_t)azc);
-}
-
-static const imu_kernel_desc_q16_t k_raw_table_q16[] = {
-    {LINE_LENGTH, kern_raw_line_length_q16, 0U},
-    {ZERO_CROSSING_RATE_IMU, kern_raw_zcr_q16, 0U},
-    {KURTOSIS, kern_raw_kurtosis_q16, 0U},
-    {ROOT_MEANS_SQUARED_IMU, kern_raw_rms_q16, 0U},
-    {AZC_IDX(0), kern_raw_azc_q16, k_azc_eps_raw_q5[0]},
-    {AZC_IDX(1), kern_raw_azc_q16, k_azc_eps_raw_q5[1]},
-    {AZC_IDX(2), kern_raw_azc_q16, k_azc_eps_raw_q5[2]},
-    {AZC_IDX(3), kern_raw_azc_q16, k_azc_eps_raw_q5[3]},
-    {AZC_IDX(4), kern_raw_azc_q16, k_azc_eps_raw_q5[4]},
-    {AZC_IDX(5), kern_raw_azc_q16, k_azc_eps_raw_q5[5]},
-    {AZC_IDX(6), kern_raw_azc_q16, k_azc_eps_raw_q5[6]},
-    {AZC_IDX(7), kern_raw_azc_q16, k_azc_eps_raw_q5[7]},
-};
-
-static const imu_kernel_desc_q16_t k_l2a_table_q16[] = {
-    {ROOT_MEANS_SQUARED_IMU, kern_l2a_rms_q16, 0U},
-    {AZC_IDX(0), kern_l2a_azc_q16, k_azc_eps_l2a_q6[0]},
-    {AZC_IDX(1), kern_l2a_azc_q16, k_azc_eps_l2a_q6[1]},
-    {AZC_IDX(2), kern_l2a_azc_q16, k_azc_eps_l2a_q6[2]},
-    {AZC_IDX(3), kern_l2a_azc_q16, k_azc_eps_l2a_q6[3]},
-    {AZC_IDX(4), kern_l2a_azc_q16, k_azc_eps_l2a_q6[4]},
-    {AZC_IDX(5), kern_l2a_azc_q16, k_azc_eps_l2a_q6[5]},
-    {AZC_IDX(6), kern_l2a_azc_q16, k_azc_eps_l2a_q6[6]},
-    {AZC_IDX(7), kern_l2a_azc_q16, k_azc_eps_l2a_q6[7]},
-};
-
-static const imu_kernel_desc_q16_t k_l2g_table_q16[] = {
-    {LINE_LENGTH, kern_l2g_line_length_q16, 0U},
-    {ROOT_MEANS_SQUARED_IMU, kern_l2g_rms_q16, 0U},
-    {CREST_FACTOR_IMU, kern_l2g_crest_q16, 0U},
-    {AZC_IDX(0), kern_l2g_azc_q16, k_azc_eps_l2g_q11[0]},
-    {AZC_IDX(1), kern_l2g_azc_q16, k_azc_eps_l2g_q11[1]},
-    {AZC_IDX(2), kern_l2g_azc_q16, k_azc_eps_l2g_q11[2]},
-    {AZC_IDX(3), kern_l2g_azc_q16, k_azc_eps_l2g_q11[3]},
-    {AZC_IDX(4), kern_l2g_azc_q16, k_azc_eps_l2g_q11[4]},
-    {AZC_IDX(5), kern_l2g_azc_q16, k_azc_eps_l2g_q11[5]},
-    {AZC_IDX(6), kern_l2g_azc_q16, k_azc_eps_l2g_q11[6]},
-    {AZC_IDX(7), kern_l2g_azc_q16, k_azc_eps_l2g_q11[7]},
-};
-
-#endif
-
-/* -------------------------------------------------------------------------- */
-/*  Dispatch                                                                  */
-/* -------------------------------------------------------------------------- */
-
-static void imu_get_table(imu_sig_kind_t kind, const imu_kernel_desc_t **table, size_t *table_len)
-{
-    switch (kind) {
-        case IMU_SIG_KIND_FLOAT:
-            *table = k_float_table;
-            *table_len = sizeof(k_float_table) / sizeof(k_float_table[0]);
+    switch (local) {
+        case LINE_LENGTH:
+            *out = fxp_q16_from_u32(
+                _line_length(sig->data.raw_data, sig->len, 16U, 1U, 0U, 18U),
+                FXP_FRAC_IMU_LINE_LENGTH_RAW);
+            return;
+        case ZERO_CROSSING_RATE_IMU:
+            *out = fxp_q16_from_u32(_zcr_raw_q16(sig->data.raw_data, sig->len), 16U);
+            return;
+        case KURTOSIS:
+            *out = fxp_q16_from_s64(_kurtosis_raw(sig->data.raw_data, sig->len), FXP_FRAC_IMU_KURTOSIS_RAW);
+            return;
+        case ROOT_MEANS_SQUARED_IMU:
+            *out = fxp_q16_from_u32(
+                _rms(sig->data.raw_data, sig->len, 16U, 1U, 0U, 22, 32U),
+                FXP_FRAC_IMU_RMS_RAW);
             return;
         default:
-            fprintf(stderr, "IMU dispatch (float): unsupported signal kind %d.\n", (int)kind);
-            abort();
+            if (local >= APPROXIMATE_ZERO_CROSSING && local < Num_imu_feat_families) {
+                uint8_t idx = (uint8_t)(local - APPROXIMATE_ZERO_CROSSING);
+                int16_t azc = _azc_from_signal(sig->data.raw_data, sig->len, 16U, 1U, k_azc_eps_raw_q5[idx]);
+                *out = fxp_q16_from_int((int32_t)azc);
+            }
+            (void)features_selector;
+            return;
     }
 }
 
-#ifdef FXP_MODE
-static void imu_get_table_q16(imu_sig_kind_t kind, const imu_kernel_desc_q16_t **table, size_t *table_len)
+static void _run_l2a_feature(const imu_sig_view_t *sig, uint8_t local, fxp_q16_t *out)
 {
-    switch (kind) {
-        case IMU_SIG_KIND_RAW:
-            *table = k_raw_table_q16;
-            *table_len = sizeof(k_raw_table_q16) / sizeof(k_raw_table_q16[0]);
+    if (local == ROOT_MEANS_SQUARED_IMU) {
+        *out = fxp_q16_from_u32(
+            _rms(sig->data.l2a_data, sig->len, 16U, 0U, 5U, -1, 16U),
+            FXP_FRAC_IMU_RMS_L2A);
+        return;
+    }
+
+    if (local >= APPROXIMATE_ZERO_CROSSING && local < Num_imu_feat_families) {
+        uint8_t idx = (uint8_t)(local - APPROXIMATE_ZERO_CROSSING);
+        int16_t azc = _azc_from_signal(sig->data.l2a_data, sig->len, 16U, 0U, k_azc_eps_l2a_q6[idx]);
+        *out = fxp_q16_from_int((int32_t)azc);
+    }
+}
+
+static void _run_l2g_feature(const imu_sig_view_t *sig, uint8_t local, fxp_q16_t *out)
+{
+    switch (local) {
+        case LINE_LENGTH:
+            *out = fxp_q16_from_u32(
+                fxp_sat_u16_from_u32(_line_length(sig->data.l2g_data, sig->len, 16U, 0U, 2U, 0U)),
+                FXP_FRAC_IMU_LINE_LENGTH_L2G);
             return;
-        case IMU_SIG_KIND_L2A:
-            *table = k_l2a_table_q16;
-            *table_len = sizeof(k_l2a_table_q16) / sizeof(k_l2a_table_q16[0]);
+        case ROOT_MEANS_SQUARED_IMU:
+            *out = fxp_q16_from_u32(
+                _rms(sig->data.l2g_data, sig->len, 16U, 0U, 3U, -1, 16U),
+                FXP_FRAC_IMU_RMS_L2G);
             return;
-        case IMU_SIG_KIND_L2G:
-            *table = k_l2g_table_q16;
-            *table_len = sizeof(k_l2g_table_q16) / sizeof(k_l2g_table_q16[0]);
+        case CREST_FACTOR_IMU: {
+            uq7_9_t rms = (uq7_9_t)_rms(sig->data.l2g_data, sig->len, 16U, 0U, 3U, -1, 16U);
+            uq5_11_t peak = _max_l2g(sig->data.l2g_data, sig->len);
+            uq2_14_t cf = (rms > 0U) ? _cf_l2g_result(peak, rms) : 0U;
+            *out = fxp_q16_from_u32((uint32_t)cf, FXP_FRAC_IMU_CREST_L2G);
             return;
+        }
         default:
-            fprintf(stderr, "IMU dispatch (Q16): unsupported signal kind %d.\n", (int)kind);
-            abort();
-    }
-}
-#endif
-
-void imu_run_feature_table(const int8_t *features_selector, imu_sig_view_t sig, float *feats)
-{
-    const imu_kernel_desc_t *table = NULL;
-    size_t table_len = 0;
-    imu_get_table(sig.kind, &table, &table_len);
-
-    for (size_t i = 0; i < table_len; i++) {
-        const imu_kernel_desc_t *row = &table[i];
-        if (features_selector[row->feature_idx] != 1) continue;
-        row->fn(&sig, &feats[row->feature_idx], row->param);
+            if (local >= APPROXIMATE_ZERO_CROSSING && local < Num_imu_feat_families) {
+                uint8_t idx = (uint8_t)(local - APPROXIMATE_ZERO_CROSSING);
+                int16_t azc = _azc_from_signal(sig->data.l2g_data, sig->len, 16U, 0U, k_azc_eps_l2g_q11[idx]);
+                *out = fxp_q16_from_int((int32_t)azc);
+            }
+            return;
     }
 }
 
-#ifdef FXP_MODE
-void imu_run_feature_table_q16(const int8_t *features_selector, imu_sig_view_t sig, fxp_q16_t *feats_q16)
+void imu_run_features_q16(const int8_t *features_selector, imu_sig_view_t sig, fxp_q16_t *feats_q16)
 {
-    const imu_kernel_desc_q16_t *table = NULL;
-    size_t table_len = 0;
-    imu_get_table_q16(sig.kind, &table, &table_len);
+    for (uint8_t local = 0U; local < Num_imu_feat_families; local++) {
+        if (features_selector[local] != 1) continue;
 
-    for (size_t i = 0; i < table_len; i++) {
-        const imu_kernel_desc_q16_t *row = &table[i];
-        if (features_selector[row->feature_idx] != 1) continue;
-        row->fn(&sig, &feats_q16[row->feature_idx], row->param_q);
+        switch (sig.kind) {
+            case IMU_SIG_KIND_RAW:
+                _run_raw_feature(features_selector, &sig, local, &feats_q16[local]);
+                break;
+            case IMU_SIG_KIND_L2A:
+                _run_l2a_feature(&sig, local, &feats_q16[local]);
+                break;
+            case IMU_SIG_KIND_L2G:
+                _run_l2g_feature(&sig, local, &feats_q16[local]);
+                break;
+            default:
+                fprintf(stderr, "IMU dispatch (Q16): unsupported signal kind %d.\n", (int)sig.kind);
+                abort();
+        }
     }
 }
 #endif

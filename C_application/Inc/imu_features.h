@@ -5,14 +5,24 @@
 
 /* Defines all the parameters of IMU features extraction */
 
-#define WIND_LEN_IMU    0.5
+#define WIND_LEN_IMU_NUM 1U
+#define WIND_LEN_IMU_DEN 2U
+#ifndef FXP_MODE
+#define WIND_LEN_IMU    ((float)WIND_LEN_IMU_NUM / (float)WIND_LEN_IMU_DEN)
+#endif
 #define OVERLAP_IMU     50
 
-#define WINDOW_SAMP_IMU     (int16_t)(WIND_LEN_IMU * IMU_FS)
-#define IMU_STEP            (int16_t)(WINDOW_SAMP_IMU * (1.0 - (OVERLAP_IMU / 100.0)))
+#define WINDOW_SAMP_IMU     ((int16_t)(((uint32_t)IMU_FS * WIND_LEN_IMU_NUM) / WIND_LEN_IMU_DEN))
+#define IMU_OVERLAP_SAMP    ((int16_t)(((uint32_t)WINDOW_SAMP_IMU * OVERLAP_IMU) / 100U))
+#define IMU_STEP            ((int16_t)(WINDOW_SAMP_IMU - IMU_OVERLAP_SAMP))
 
+#define IMU_WINDOW_TICKS    ((uint32_t)(((uint64_t)WINDOW_SAMP_IMU * AUDIO_FS) / IMU_FS))
+#define IMU_STEP_TICKS      ((uint32_t)(((uint64_t)IMU_STEP * AUDIO_FS) / IMU_FS))
+
+#ifndef FXP_MODE
 #define IMU_OVERLAP_SEC     (float)(WIND_LEN_IMU * (OVERLAP_IMU / 100.0))
 #define IMU_STEP_SEC        (float)(WIND_LEN_IMU - IMU_OVERLAP_SEC)
+#endif
 
 /**
  * Epsilon tolerance value for the AZC computation

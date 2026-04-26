@@ -901,7 +901,7 @@ int main(int argc, char **argv)
         }
 
         compute_audio_float_features(audio_features_selector, sig, WINDOW_SAMP_AUDIO, AUDIO_FS, audio_ref_feats);
-        audio_features_fxp_q16_from_q14(audio_features_selector, audio_q14, WINDOW_SAMP_AUDIO, AUDIO_FS, audio_fxp_feats);
+        audio_features(audio_features_selector, audio_q14, WINDOW_SAMP_AUDIO, AUDIO_FS, audio_fxp_feats);
 
         int traced = (w < trace_limit);
         int traced_count = 0;
@@ -972,14 +972,14 @@ int main(int argc, char **argv)
 
             float ref_l2a = sqrtf(sig[i][0] * sig[i][0] + sig[i][1] * sig[i][1] + sig[i][2] * sig[i][2]);
             float ref_l2g = sqrtf(sig[i][3] * sig[i][3] + sig[i][4] * sig[i][4] + sig[i][5] * sig[i][5]);
-            uq10_6_t l2a_q6 = fxp_l2_norm_accel_from_raw(imu_q5[i][0], imu_q5[i][1], imu_q5[i][2]);
-            uq5_11_t l2g_q11 = fxp_l2_norm_gyro_from_raw(imu_q5[i][3], imu_q5[i][4], imu_q5[i][5]);
+            uq10_6_t l2a_q6 = imu_l2_norm_accel_from_raw(imu_q5[i][0], imu_q5[i][1], imu_q5[i][2]);
+            uq5_11_t l2g_q11 = imu_l2_norm_gyro_from_raw(imu_q5[i][3], imu_q5[i][4], imu_q5[i][5]);
             fxp_metric_add(&imu_l2a_metric, ref_l2a, FXP_TO_FLOAT(l2a_q6, FXP_FRAC_IMU_L2A));
             fxp_metric_add(&imu_l2g_metric, ref_l2g, FXP_TO_FLOAT(l2g_q11, FXP_FRAC_IMU_L2G));
         }
 
         compute_imu_float_features(imu_features_selector, sig, WINDOW_SAMP_IMU, imu_ref_feats);
-        imu_features_fxp_q16_from_raw(imu_features_selector, imu_q5, WINDOW_SAMP_IMU, imu_fxp_feats);
+        imu_features(imu_features_selector, imu_q5, WINDOW_SAMP_IMU, imu_fxp_feats);
 
         int traced = (w < trace_limit);
         int traced_count = 0;

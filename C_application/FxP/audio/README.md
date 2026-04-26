@@ -10,9 +10,9 @@ Current contents:
   - no per-processing-block split files remain.
 - `audio_pipeline_fxp.h`:
   - public FxP audio entrypoints:
-    - `fxp_audio_fft_features_from_q14(...)`
-    - `fxp_audio_periodogram_features_from_q14(...)`
-    - `fxp_audio_mel_features_from_q14(...)`
+    - `audio_fft_features(...)`
+    - `audio_psd_features(...)`
+    - `audio_mel_features(...)`
 
 Latest regression snapshot (`2026-04-20`):
 
@@ -94,9 +94,9 @@ ML execution in FxP mode:
 - safety default:
   - if `--mode fxp` is set and `--twiddle` is omitted, `evaluate.py` defaults to `-DFIXED_POINT=32`.
 - audio block behavior in this mode:
-  - FFT block dispatch (`fxp_audio_fft_features_from_q14`) is active for selected FFT kernels.
-  - Periodogram block dispatch (`fxp_audio_periodogram_features_from_q14`) is active for selected PSD kernels.
-  - Mel block dispatch (`fxp_audio_mel_features_from_q14`) is active for selected Mel bins/families.
+  - FFT block dispatch (`audio_fft_features`) is active for selected FFT kernels.
+  - Periodogram block dispatch (`audio_psd_features`) is active for selected PSD kernels.
+  - Mel block dispatch (`audio_mel_features`) is active for selected Mel bins/families.
 - model selector note (`Inc/audio_model.h`):
   - selected FFT/PSD kernels are all among the FxP-ported set (`SPECTRAL_ROLLOFF`, `SPECTRAL_SPREAD`, `SPECTRAL_KURTOSIS`, `SPECTRAL_FLATNESS`, `DOMINANT_FREQUENCY`, `PSD_BAND_1..3`).
   - float-only fallback kernels in these families (`SPECTRAL_DECREASE`, `SPECTRAL_SLOPE`, `SPECTRAL_SKEW`, `SPECTRAL_STD`, `SPECTRAL_ENTROPY`) are not selected by the current model feature selector.

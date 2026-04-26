@@ -135,6 +135,41 @@ static inline uint32_t fxp_div_u32(uint32_t num, uint32_t denom, int extra)
     return fxp_sat_u32_from_u64(scaled / denom);
 }
 
+static inline int32_t fxp_round_div_s64(int64_t num, int32_t den)
+{
+    if (den <= 0) return 0;
+    if (num >= 0) return (int32_t)((num + (den / 2)) / den);
+    return -(int32_t)(((-num) + (den / 2)) / den);
+}
+
+static inline int64_t fxp_round_div_i64(int64_t num, int32_t den)
+{
+    if (den <= 0) return 0;
+    if (num >= 0) return (num + (den / 2)) / den;
+    return -(((-num) + (den / 2)) / den);
+}
+
+static inline uint32_t fxp_round_div_u64(uint64_t num, uint32_t den)
+{
+    if (den == 0U) return 0U;
+    return (uint32_t)((num + ((uint64_t)den >> 1)) / (uint64_t)den);
+}
+
+static inline int32_t fxp_floor_div_s64(int64_t num, int32_t den)
+{
+    int64_t q = num / (int64_t)den;
+    int64_t r = num - q * (int64_t)den;
+    if (r != 0 && num < 0) q -= 1;
+    return (int32_t)q;
+}
+
+static inline uint64_t fxp_round_shift_u64(uint64_t v, uint32_t shift)
+{
+    if (shift == 0U) return v;
+    if (shift >= 64U) return 0ULL;
+    return (v + (1ULL << (shift - 1U))) >> shift;
+}
+
 static inline uint32_t _fxp_isqrt32(uint32_t x)
 {
     if (x == 0) return 0;
