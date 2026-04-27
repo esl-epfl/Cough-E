@@ -6,28 +6,9 @@ __pycache__/
 # C build
 C_application/build/
 
-# FxP test harness build artifacts
-C_application/test/fxp_test_imu
-C_application/test/fxp_test_imu.dSYM/
-C_application/test/__pycache__/
-C_application/test/fxp_accuracy_harness.dSYM/
-C_application/test/fxp_accuracy_harness/
-C_application/test/kissfft_fxp_verify
-C_application/test/kissfft_fxp_verify.dSYM/
-C_application/test/kissfft_fxp_impulse
-C_application/test/kissfft_fxp_impulse.dSYM/
-
-# FxP audio pipeline test sources (work in progress)
-C_application/test/kissfft_fxp_impulse.c
-C_application/test/kissfft_fxp_verify.c
-C_application/kiss_fftr/gen_twiddles_q15.py
+# Generated KissFFT twiddles
 C_application/kiss_fftr/twiddles_win08_fs8000_q15.h
 C_application/kiss_fftr/twiddles_win08_fs8000_q31.h
-
-# Range/precision/accuracy analysis outputs (generated, not source)
-C_application/range_analysis/precision_analysis.csv
-C_application/range_analysis/accuracy_results.csv
-C_application/range_analysis/accuracy_summary.csv
 
 # Generated evaluation headers (per-subject folders)
 C_application/input_data/*/
@@ -37,42 +18,19 @@ C_application/evaluation/results.csv
 C_application/evaluation/results_float.csv
 C_application/evaluation/results_fxp.csv
 C_application/evaluation/summary.json
-C_application/evaluation/results_float.csv
-C_application/evaluation/results_fxp.csv
+C_application/evaluation/summary_float.json
+C_application/evaluation/summary_fxp.json
 C_application/evaluation/comparison_float_vs_fxp.json
 C_application/evaluation/fxp/__pycache__/
 C_application/evaluation/fxp/*.dSYM/
 C_application/evaluation/fxp/fxp_stage_harness
 C_application/evaluation/fxp/.fxp_stage_harness.build.lock
-C_application/evaluation/fxp/twiddle_precision_cases.csv
-C_application/evaluation/fxp/twiddle_precision_summary.csv
-C_application/evaluation/fxp/baselines/
 
 # Range analysis output and scripts (FxP-Port branch only keeps the header)
-C_application/range_analysis/*.csv
-C_application/range_analysis/*.json
-C_application/range_analysis/*.py
-C_application/range_analysis/accuracy_results.csv
-C_application/range_analysis/accuracy_summary.csv
-C_application/range_analysis/precision_analysis.csv
-
-# FxP-Port branch notes
-C_application/port.md
-C_application/OVERLEAF.md
-
-# FxP-Port test artifacts
-C_application/test/
-!C_application/test/
-C_application/test/*
-!C_application/test/fxp_audio_fft_regression.c
-!C_application/test/fxp_audio_periodogram_regression.c
-!C_application/test/fxp_audio_mel_regression.c
+C_application/range_analysis/
 
 # Local dataset
 datasets/
-
-# Range analysis output
-C_application/range_analysis/
 
 # Overleaf docs
 C_application/OVERLEAF.md

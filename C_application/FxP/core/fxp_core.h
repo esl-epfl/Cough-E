@@ -1,6 +1,5 @@
 #pragma once
 
-#include <inttypes.h>
 #include <limits.h>
 #include <stdint.h>
 
@@ -34,7 +33,6 @@ typedef uint32_t uq0_20_t;
 typedef uint32_t uq9_22_t;
 typedef uint32_t uq18_12_t;
 typedef uint32_t uq7_15_t;
-typedef uint32_t uq18_11_t;
 typedef uint32_t uq18_14_t;
 typedef uint32_t uq24_8_t;
 
@@ -43,7 +41,7 @@ typedef int64_t  q34_30_t;
 typedef uint64_t uq20_44_t;
 typedef uint64_t uq30_32_t;
 
-/* Width checks keep aliases in sync with manifest-generated constants. */
+/* Width checks keep aliases in sync with Q-format constants. */
 _Static_assert(sizeof(q11_5_t) * 8 == FXP_BITS_IMU_RAW, "q11_5_t width mismatch");
 _Static_assert(sizeof(uq10_6_t) * 8 == FXP_BITS_IMU_L2A, "uq10_6_t width mismatch");
 _Static_assert(sizeof(uq5_11_t) * 8 == FXP_BITS_IMU_L2G, "uq5_11_t width mismatch");
@@ -89,13 +87,6 @@ static inline uint16_t fxp_sat_u16_from_u32(uint32_t x)
     return (uint16_t)x;
 }
 
-static inline uint16_t fxp_sat_u16_from_s32(int32_t x)
-{
-    if (x < 0) return 0;
-    if ((uint32_t)x > UINT16_MAX) return UINT16_MAX;
-    return (uint16_t)x;
-}
-
 static inline int32_t fxp_sat_s32_from_s64(int64_t x)
 {
     if (x > INT32_MAX) return INT32_MAX;
@@ -113,12 +104,8 @@ static inline uint32_t fxp_sat_u32_from_u64(uint64_t x)
 /*  Math helpers                                                              */
 /* -------------------------------------------------------------------------- */
 
-#define FXP_SR(x, n) ((x) >> (n))
-#define FXP_SL(x, n) ((x) << (n))
-
 static inline int32_t  fxp_mul_s32(int32_t a, int32_t b)    { return a * b; }
 static inline uint32_t fxp_mul_u32(uint32_t a, uint32_t b)  { return a * b; }
-static inline int64_t  fxp_mul_s64(int64_t a, int64_t b)    { return a * b; }
 static inline uint64_t fxp_mul_u64(uint64_t a, uint64_t b)  { return a * b; }
 
 static inline int32_t fxp_div_s32(int32_t num, int32_t denom, int extra)
@@ -126,13 +113,6 @@ static inline int32_t fxp_div_s32(int32_t num, int32_t denom, int extra)
     if (denom == 0) return (num >= 0) ? INT32_MAX : INT32_MIN;
     int64_t scaled = ((int64_t)num) << extra;
     return fxp_sat_s32_from_s64(scaled / denom);
-}
-
-static inline uint32_t fxp_div_u32(uint32_t num, uint32_t denom, int extra)
-{
-    if (denom == 0) return UINT32_MAX;
-    uint64_t scaled = ((uint64_t)num) << extra;
-    return fxp_sat_u32_from_u64(scaled / denom);
 }
 
 static inline int32_t fxp_round_div_s64(int64_t num, int32_t den)
@@ -221,12 +201,6 @@ static inline uint64_t fxp_sqrt64(uint64_t x)
 static inline int32_t fxp_abs_s32(int32_t x)
 {
     if (x == INT32_MIN) return INT32_MAX;
-    return x < 0 ? -x : x;
-}
-
-static inline int16_t fxp_abs_s16(int16_t x)
-{
-    if (x == INT16_MIN) return INT16_MAX;
     return x < 0 ? -x : x;
 }
 

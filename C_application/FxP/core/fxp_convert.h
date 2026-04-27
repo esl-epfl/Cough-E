@@ -44,29 +44,10 @@ static inline q11_5_t fxp_imu_raw_from_float(float x)
     return fxp_sat_s16_from_s32(FXP_FROM_FLOAT(x, FXP_FRAC_IMU_RAW));
 }
 
-static inline uq10_6_t fxp_imu_l2a_from_float(float x)
-{
-    return fxp_sat_u16_from_u32(FXP_FROM_FLOAT_U(x, FXP_FRAC_IMU_L2A));
-}
-
-static inline uq5_11_t fxp_imu_l2g_from_float(float x)
-{
-    return fxp_sat_u16_from_u32(FXP_FROM_FLOAT_U(x, FXP_FRAC_IMU_L2G));
-}
-
 static inline int16_t fxp_audio_from_float(float x)
 {
     return fxp_sat_s16_from_s32(FXP_FROM_FLOAT(x, FXP_FRAC_AUDIO_INPUT));
 }
 
 #define FXP_IMU_RAW_FROM_FLOAT(x) (fxp_imu_raw_from_float((float)(x)))
-#define FXP_IMU_L2A_FROM_FLOAT(x) (fxp_imu_l2a_from_float((float)(x)))
-#define FXP_IMU_L2G_FROM_FLOAT(x) (fxp_imu_l2g_from_float((float)(x)))
 #define FXP_AUDIO_FROM_FLOAT(x)   (fxp_audio_from_float((float)(x)))
-
-static inline void fxp_convert_imu_raw_buffer(const float *in, q11_5_t *out, int16_t len)
-{
-    for (int16_t i = 0; i < len; i++) {
-        out[i] = FXP_IMU_RAW_FROM_FLOAT(in[i]);
-    }
-}
