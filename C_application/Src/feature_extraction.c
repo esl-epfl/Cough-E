@@ -15,7 +15,6 @@
 
 #if defined(FXP_MODE) && defined(FIXED_POINT)
 #include <audio/audio_pipeline_fxp.h>
-#include <core/fxp_convert.h>
 #include <core/fxp_core.h>
 #include <imu/imu_pipeline.h>
 #endif

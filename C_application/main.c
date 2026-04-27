@@ -13,7 +13,6 @@
 
 #ifdef FXP_MODE
 #include <core/cough_backend.h>
-#include <core/fxp_convert.h>
 #define FEAT_THRESHOLD_AUDIO ((feat_t)FXP_AUDIO_SCORE_TH_Q16)
 #define FEAT_THRESHOLD_IMU ((feat_t)FXP_IMU_SCORE_TH_Q16)
 #else

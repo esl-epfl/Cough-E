@@ -320,6 +320,116 @@ static int find_or_add(named_metric_t *table, int *count, const char *name)
     return idx;
 }
 
+static void add_metric(named_metric_t *table,
+                       int *count,
+                       const char *name,
+                       double ref,
+                       double fxp)
+{
+    int slot = find_or_add(table, count, name);
+    if (slot >= 0) fxp_metric_add(&table[slot].acc, ref, fxp);
+}
+
+static void add_audio_kernel_errors(named_metric_t *table,
+                                    int *count,
+                                    int feature_idx,
+                                    double ref,
+                                    double fxp)
+{
+    switch (feature_idx) {
+        case SPECTRAL_ROLLOFF:
+            add_metric(table, count, "compute_rfft", ref, fxp);
+            add_metric(table, count, "compute_rolloff", ref, fxp);
+            return;
+        case SPECTRAL_SPREAD:
+            add_metric(table, count, "compute_rfft", ref, fxp);
+            add_metric(table, count, "compute_centroid", ref, fxp);
+            add_metric(table, count, "compute_spread", ref, fxp);
+            return;
+        case SPECTRAL_KURTOSIS:
+            add_metric(table, count, "compute_rfft", ref, fxp);
+            add_metric(table, count, "compute_centroid", ref, fxp);
+            add_metric(table, count, "compute_spread", ref, fxp);
+            add_metric(table, count, "compute_kurt", ref, fxp);
+            return;
+        case SPECTRAL_FLATNESS:
+            add_metric(table, count, "compute_periodogram", ref, fxp);
+            add_metric(table, count, "compute_flatness", ref, fxp);
+            return;
+        case DOMINANT_FREQUENCY:
+            add_metric(table, count, "compute_periodogram", ref, fxp);
+            add_metric(table, count, "get_dominant_freq", ref, fxp);
+            return;
+        case CREST_FACTOR:
+            add_metric(table, count, "audio_get_rms", ref, fxp);
+            add_metric(table, count, "audio_get_max", ref, fxp);
+            add_metric(table, count, "audio_crest_factor", ref, fxp);
+            return;
+        default:
+            break;
+    }
+
+    if (feature_idx >= POWER_SPECTRAL_DENSITY &&
+        feature_idx < POWER_SPECTRAL_DENSITY + N_PSD) {
+        add_metric(table, count, "compute_periodogram", ref, fxp);
+        add_metric(table, count, "normalized_bandpowers", ref, fxp);
+        return;
+    }
+
+    if (feature_idx >= MEL_FREQUENCY_CEPSTRAL_COEFFICIENT &&
+        feature_idx < MEL_FREQUENCY_CEPSTRAL_COEFFICIENT + (3 * N_MFCC)) {
+        add_metric(table, count, "stft", ref, fxp);
+        add_metric(table, count, "mel_spectrogram", ref, fxp);
+        add_metric(table, count, "power_to_dB", ref, fxp);
+        add_metric(table, count, "feature_aggregation", ref, fxp);
+        return;
+    }
+
+    if (feature_idx >= MEL_FREQUENCY_CEPSTRAL_COEFFICIENT + (3 * N_MFCC) &&
+        feature_idx < MEL_FREQUENCY_CEPSTRAL_COEFFICIENT + (4 * N_MFCC)) {
+        add_metric(table, count, "stft", ref, fxp);
+        add_metric(table, count, "mel_spectrogram", ref, fxp);
+        add_metric(table, count, "entropy", ref, fxp);
+        add_metric(table, count, "feature_aggregation", ref, fxp);
+    }
+}
+
+static void add_imu_kernel_errors(named_metric_t *table,
+                                  int *count,
+                                  int feature_idx,
+                                  double ref,
+                                  double fxp)
+{
+    int sig = feature_idx / Num_imu_feat_families;
+    int fam = feature_idx % Num_imu_feat_families;
+
+    if (sig >= 6) {
+        add_metric(table, count, "L2_norm", ref, fxp);
+    }
+
+    switch (fam) {
+        case LINE_LENGTH:
+            add_metric(table, count, "get_line_length", ref, fxp);
+            return;
+        case KURTOSIS:
+            add_metric(table, count, "get_kurtosis", ref, fxp);
+            return;
+        case ROOT_MEANS_SQUARED_IMU:
+            add_metric(table, count, "get_rms", ref, fxp);
+            return;
+        case CREST_FACTOR_IMU:
+            add_metric(table, count, "get_rms", ref, fxp);
+            add_metric(table, count, "get_max", ref, fxp);
+            return;
+        default:
+            if (fam >= APPROXIMATE_ZERO_CROSSING &&
+                fam < APPROXIMATE_ZERO_CROSSING + N_AZC) {
+                add_metric(table, count, "azc_computation", ref, fxp);
+            }
+            return;
+    }
+}
+
 int main(void)
 {
     named_metric_t audio_table[MAX_KERNELS];
@@ -355,8 +465,7 @@ int main(void)
         for (int i = 0; i < Number_AUDIO_Features; i++) {
             if (!audio_features_selector[i]) continue;
             float fxp_v = FXP_TO_FLOAT(audio_fxp_feats[i], FXP_PIPE_FRAC);
-            int slot = find_or_add(audio_table, &audio_n, audio_feature_name(i));
-            if (slot >= 0) fxp_metric_add(&audio_table[slot].acc, audio_ref_feats[i], fxp_v);
+            add_audio_kernel_errors(audio_table, &audio_n, i, audio_ref_feats[i], fxp_v);
         }
     }
 
@@ -388,10 +497,7 @@ int main(void)
         for (int i = 0; i < Number_IMU_Features; i++) {
             if (!imu_features_selector[i]) continue;
             float fxp_v = FXP_TO_FLOAT(imu_fxp_feats[i], FXP_PIPE_FRAC);
-            char name[64];
-            imu_feature_name(i, name, sizeof(name));
-            int slot = find_or_add(imu_table, &imu_n, name);
-            if (slot >= 0) fxp_metric_add(&imu_table[slot].acc, imu_ref_feats[i], fxp_v);
+            add_imu_kernel_errors(imu_table, &imu_n, i, imu_ref_feats[i], fxp_v);
         }
     }
 

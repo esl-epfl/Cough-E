@@ -37,6 +37,14 @@ python C_application/evaluation/transform_dataset.py --dataset_path /path/to/ful
 python C_application/evaluation/evaluate.py --mode fxp --twiddle 32
 ```
 
+#### Run progressive FxP block evaluation
+```
+python C_application/evaluation/evaluate.py --fxp-block audio_mel
+```
+
+Supported blocks: `audio_fft`, `audio_psd`, `audio_mel`, `audio_scalar`,
+`audio_all`, `imu_raw`, `imu_l2`, `imu_all`.
+
 ## Fixed-Point Error Metrics
 
 `evaluate.py --mode fxp-error` reports fixed-point kernel error metrics against

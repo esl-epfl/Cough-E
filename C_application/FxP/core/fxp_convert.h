@@ -17,17 +17,6 @@ static inline int32_t fxp_from_float_signed(float x, uint8_t frac_bits)
     return (int32_t)scaled;
 }
 
-static inline uint32_t fxp_from_float_unsigned(float x, uint8_t frac_bits)
-{
-    if (x <= 0.0f) return 0;
-
-    float scale = (float)(1ULL << frac_bits);
-    float scaled = x * scale + 0.5f;
-
-    if (scaled > (float)UINT32_MAX) return UINT32_MAX;
-    return (uint32_t)scaled;
-}
-
 static inline float fxp_to_float(int64_t x, uint8_t frac_bits)
 {
     float scale = (float)(1ULL << frac_bits);
@@ -36,7 +25,6 @@ static inline float fxp_to_float(int64_t x, uint8_t frac_bits)
 
 // Compatibility macros used across the existing codebase.
 #define FXP_FROM_FLOAT(x, f)   (fxp_from_float_signed((float)(x), (uint8_t)(f)))
-#define FXP_FROM_FLOAT_U(x, f) (fxp_from_float_unsigned((float)(x), (uint8_t)(f)))
 #define FXP_TO_FLOAT(x, f)     (fxp_to_float((int64_t)(x), (uint8_t)(f)))
 
 static inline q11_5_t fxp_imu_raw_from_float(float x)

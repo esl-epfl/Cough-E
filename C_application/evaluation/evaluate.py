@@ -85,6 +85,7 @@ DEFAULT_DATASET_PATH = os.path.join(REPO_ROOT, "Datasets", "full_dataset_test")
 
 FXP_DIR = os.path.join(os.path.dirname(__file__), "fxp")
 FXP_ERROR_HARNESS_BIN = os.path.join(FXP_DIR, "fxp_stage_harness")
+FXP_PROGRESSIVE_HARNESS_BIN = os.path.join(FXP_DIR, "fxp_progressive_harness")
 
 # Original main.h content for backup/restore
 MAIN_H_ORIGINAL = None
@@ -514,6 +515,23 @@ def _compile_fxp_error_harness(audio_relpath, imu_relpath, twiddle):
     return result.returncode == 0, result.stderr
 
 
+def _compile_fxp_progressive_harness(audio_relpath, imu_relpath, bio_relpath, twiddle):
+    """Build the mixed float/FxP progressive feature-block harness."""
+    header_flags = (
+        f"-DPROGRESSIVE_INPUTS_INJECTED "
+        f"-include input_data/{audio_relpath} "
+        f"-include input_data/{imu_relpath} "
+        f"-include input_data/{bio_relpath}"
+    )
+    cmd = [
+        "make", "-B", "-C", FXP_DIR, "fxp_progressive_harness",
+        f"FFT_MODE=-DFIXED_POINT={twiddle}",
+        f"HEADER_FLAGS={header_flags}",
+    ]
+    result = subprocess.run(cmd, capture_output=True, text=True)
+    return result.returncode == 0, result.stderr
+
+
 def _parse_fxp_kernel_acc(output):
     """Parse FXP_KERNEL_ACC lines into {(block, kernel): accumulator dict}."""
     rows = {}
@@ -631,6 +649,89 @@ def _evaluate_fxp_errors(dataset_path, twiddle):
     print(f"\n{bar}")
     print(f"OVERALL ({n_recordings} recordings, {total_duration / 3600.0:.3f} hrs)")
     print(bar)
+
+
+FXP_BLOCKS = [
+    "audio_fft", "audio_psd", "audio_mel", "audio_scalar", "audio_all",
+    "imu_raw", "imu_l2", "imu_all",
+]
+
+
+def _evaluate_progressive_recording(subj_id, trial, mov, noise, sound,
+                                    dataset_path, input_data_dir, fxp_block, twiddle):
+    result = transform_recording(subj_id, trial, mov, noise, sound,
+                                 dataset_path, input_data_dir)
+    if result is None:
+        return None
+
+    suffix, audio_relpath, imu_relpath, bio_relpath = result
+    ok, err = _compile_fxp_progressive_harness(audio_relpath, imu_relpath, bio_relpath, twiddle)
+    if not ok:
+        print(f"  FAILED to compile progressive harness for {suffix}:\n{err}")
+        return None
+
+    try:
+        run = subprocess.run([FXP_PROGRESSIVE_HARNESS_BIN, fxp_block],
+                             capture_output=True, text=True, timeout=60)
+    except subprocess.TimeoutExpired:
+        print(f"  TIMEOUT for {suffix}")
+        return None
+    if run.returncode != 0:
+        print(f"  progressive harness failed for {suffix}:\n{run.stderr}")
+        return None
+
+    pred_segments = parse_c_output(run.stdout)
+    gt_events = load_ground_truth(dataset_path, subj_id, trial, mov, noise, sound)
+    duration = get_recording_duration(dataset_path, subj_id, trial, mov, noise, sound)
+
+    scores = score_recording(gt_events, pred_segments, duration)
+    scores.update({
+        "subject": subj_id,
+        "trial": trial,
+        "movement": mov,
+        "noise": noise,
+        "sound": sound,
+        "duration": duration,
+    })
+    return scores
+
+
+def _evaluate_progressive_subjects(dataset_path, fxp_block, twiddle):
+    all_results = []
+    for subj_id in get_subject_ids(dataset_path):
+        print(f"\n=== Subject {subj_id} ===")
+        for trial in TRIALS:
+            for mov in MOVEMENTS:
+                for noise in NOISES:
+                    for sound in SOUNDS:
+                        rec_id = f"t{trial}_{mov}_{noise}_{sound}"
+                        result = _evaluate_progressive_recording(
+                            subj_id, trial, mov, noise, sound,
+                            dataset_path, INPUT_DATA_DIR, fxp_block, twiddle)
+                        if result is not None:
+                            all_results.append(result)
+                            print(f"  {rec_id}: TP_evt={result['tp_evt']} "
+                                  f"FP_evt={result['fp_evt']} FN_evt={result['fn_evt']}")
+    return all_results
+
+
+def _run_progressive_eval(fxp_block, twiddle):
+    print(f"Using progressive FxP feature block: {fxp_block} (twiddle={twiddle})")
+    results = _evaluate_progressive_subjects(DEFAULT_DATASET_PATH, fxp_block, twiddle)
+    if not results:
+        print("No recordings processed. Check the default dataset path.")
+        sys.exit(1)
+
+    aggregate = compute_aggregate_metrics(results)
+    per_subject = print_results(results, aggregate)
+
+    output_dir = os.path.dirname(__file__)
+    os.makedirs(output_dir, exist_ok=True)
+    save_results_csv(results, os.path.join(output_dir, f"results_fxp_block_{fxp_block}.csv"))
+    save_summary_json(aggregate, os.path.join(output_dir, f"summary_fxp_block_{fxp_block}.json"),
+                      build_per_subject_json(per_subject))
+
+    return aggregate
     if overall:
         for block in ("audio", "imu"):
             kernels = sorted(k for (b, k) in overall if b == block)
@@ -683,9 +784,15 @@ def main(argv=None):
                         help="float / fxp ML metrics, or fxp-error for kernel-level FxP-vs-float error metrics")
     parser.add_argument("--twiddle", type=int, choices=[16, 32], default=32,
                         help="KissFFT twiddle precision (used in fxp / fxp-error modes)")
+    parser.add_argument("--fxp-block", choices=FXP_BLOCKS,
+                        help="run mixed float/FxP ML metrics with only this feature block replaced by FxP outputs")
 
     args = parser.parse_args(argv)
-    if args.mode == "fxp-error":
+    if args.fxp_block:
+        if args.mode != "float":
+            parser.error("--fxp-block is an evaluation mode by itself; do not combine it with --mode fxp or --mode fxp-error")
+        _run_progressive_eval(args.fxp_block, args.twiddle)
+    elif args.mode == "fxp-error":
         _evaluate_fxp_errors(DEFAULT_DATASET_PATH, args.twiddle)
     else:
         _run_mode_eval(args.mode, args.twiddle)
