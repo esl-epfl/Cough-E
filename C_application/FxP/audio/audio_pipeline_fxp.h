@@ -2,28 +2,10 @@
 
 #include <inttypes.h>
 
-#include <core/cough_backend.h>
 #include <audio_features.h>
-
 #include <core/fxp_core.h>
-#include <core/fxp_convert.h>
-#include <core/fxp_qformats.h>
 
 #if defined(FXP_MODE) && defined(FIXED_POINT)
-
-typedef struct {
-    const uq12_20_t *mags_q20;
-    const uq12_20_t *freqs_q20;
-    int16_t len;
-    uq15_17_t sum_mags_q17;
-} audio_fft_view_t;
-
-typedef struct {
-    const uq18_14_t *proxy_q14;
-    const int32_t *log_proxy_q11;
-    const uq12_20_t *freqs_q20;
-    int16_t len;
-} audio_psd_view_t;
 
 void audio_fft_features(const int8_t *features_selector,
                         const int16_t *sig_q14,

@@ -17,17 +17,6 @@ static inline uq2_14_t _cf_l2g_result(uq5_11_t peak, uq7_9_t rms)
     return (uq2_14_t)(((uint32_t)peak << 12) / (uint32_t)rms);
 }
 
-static inline uq0_16_t _zcr_raw_q16(const q11_5_t *sig, int16_t len)
-{
-    if (len <= 1) return 0U;
-
-    int crossings = 0;
-    for (int16_t i = 0; i < len - 1; i++) {
-        if ((sig[i] ^ sig[i + 1]) < 0) crossings++;
-    }
-    return (uq0_16_t)fxp_uq0_16_ratio((uint32_t)crossings, (uint32_t)(len - 1));
-}
-
 static inline uint64_t _shift_u64(uint64_t value, int shift)
 {
     return (shift >= 0) ? (value << shift) : (value >> (-shift));
@@ -345,9 +334,6 @@ static void _run_raw_feature(const int8_t *features_selector,
             *out = fxp_q16_from_u32(
                 _line_length(sig->data.raw_data, sig->len, 16U, 1U, 0U, 18U),
                 FXP_FRAC_IMU_LINE_LENGTH_RAW);
-            return;
-        case ZERO_CROSSING_RATE_IMU:
-            *out = fxp_q16_from_u32(_zcr_raw_q16(sig->data.raw_data, sig->len), 16U);
             return;
         case KURTOSIS:
             *out = fxp_q16_from_s64(_kurtosis_raw(sig->data.raw_data, sig->len), FXP_FRAC_IMU_KURTOSIS_RAW);

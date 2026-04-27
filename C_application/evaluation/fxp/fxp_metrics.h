@@ -33,32 +33,16 @@ static inline void fxp_metric_add(fxp_metric_acc_t *m, double ref, double fxp)
     if (abs_ref > m->max_abs_ref) m->max_abs_ref = abs_ref;
 }
 
-static inline double fxp_metric_rel_rmse_pct(const fxp_metric_acc_t *m)
+static inline void fxp_metric_print_kernel_acc(const char *block,
+                                               const char *kernel,
+                                               const fxp_metric_acc_t *m)
 {
-    if (m->n <= 0 || m->sum_sq_ref <= 0.0) return 0.0;
-    return 100.0 * sqrt(m->sum_sq_err / m->sum_sq_ref);
-}
-
-static inline double fxp_metric_max_abs_pct(const fxp_metric_acc_t *m)
-{
-    return (m->max_abs_ref > 0.0) ? (100.0 * m->max_abs_err / m->max_abs_ref) : 0.0;
-}
-
-static inline void fxp_metric_print_stage(const char *prefix,
-                                          const char *mode,
-                                          const char *block,
-                                          const char *stage,
-                                          const char *qformat,
-                                          const fxp_metric_acc_t *m)
-{
-    printf("%s,mode=%s,block=%s,kernel=%s,stage=%s,qformat=%s,n=%d,rel_rmse_pct=%.9g,max_abs_pct=%.9g\n",
-           prefix,
-           mode,
+    printf("FXP_KERNEL_ACC,block=%s,kernel=%s,n=%d,sum_sq_err=%.17g,sum_sq_ref=%.17g,max_abs_err=%.17g,max_abs_ref=%.17g\n",
            block,
-           stage,
-           stage,
-           qformat,
+           kernel,
            m->n,
-           fxp_metric_rel_rmse_pct(m),
-           fxp_metric_max_abs_pct(m));
+           m->sum_sq_err,
+           m->sum_sq_ref,
+           m->max_abs_err,
+           m->max_abs_ref);
 }

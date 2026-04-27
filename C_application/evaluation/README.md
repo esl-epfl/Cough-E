@@ -37,22 +37,22 @@ python C_application/evaluation/transform_dataset.py --dataset_path /path/to/ful
 python C_application/evaluation/evaluate.py --mode fxp --twiddle 32
 ```
 
-## Fixed-Point Harness
+## Fixed-Point Error Metrics
 
-`evaluation/fxp/fxp_harness.py` reports fixed-point kernel error metrics against
-the float baseline. `evaluate.py` remains the production end-to-end runner for
-float/FxP ML metrics.
+`evaluate.py --mode fxp-error` reports fixed-point kernel error metrics against
+the float baseline. `evaluate.py --mode float` and `evaluate.py --mode fxp`
+remain the end-to-end ML metric runners.
 
 Run from the repository root:
 
 ```
-python C_application/evaluation/fxp/fxp_harness.py
+python C_application/evaluation/evaluate.py --mode fxp-error
 ```
 
-The script emits one `FXP_ERROR` row per measured kernel/function:
+The harness emits one accumulator row per measured kernel/function:
 
 ```
-FXP_ERROR,block=audio,kernel=...,stage=...,qformat=...,n=...,rmse_pct=...,max_abs_pct=...
+FXP_KERNEL_ACC,block=audio,kernel=...,n=...,sum_sq_err=...,sum_sq_ref=...,max_abs_err=...,max_abs_ref=...
 ```
 
 ## Output files

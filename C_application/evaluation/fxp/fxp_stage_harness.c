@@ -4,14 +4,15 @@
 #include <stdlib.h>
 #include <string.h>
 
-#ifndef AUDIO_HEADER
-#define AUDIO_HEADER <input_data/audio_input_55502_w0_9wnds.h>
+/* Audio + IMU input headers are injected via gcc -include so callers can
+ * swap them per recording without quoting headaches in Make/shell. The
+ * defaults below are used only when neither -include is provided. */
+#if !defined(AUDIO_LEN)
+#include <input_data/audio_input_55502_w0_9wnds.h>
 #endif
-#ifndef IMU_HEADER
-#define IMU_HEADER <input_data/imu_input_55502_w0_9wnds.h>
+#if !defined(IMU_LEN)
+#include <input_data/imu_input_55502_w0_9wnds.h>
 #endif
-#include AUDIO_HEADER
-#include IMU_HEADER
 
 #include <audio_features.h>
 #include <audio_model.h>
@@ -34,14 +35,6 @@ int main(void)
     return 1;
 }
 #else
-
-static int arg_value(int argc, char **argv, const char *name, int fallback)
-{
-    for (int i = 1; i < argc - 1; i++) {
-        if (strcmp(argv[i], name) == 0) return atoi(argv[i + 1]);
-    }
-    return fallback;
-}
 
 static const char *audio_feature_name(int idx)
 {
@@ -308,20 +301,34 @@ static void compute_imu_float_features(const int8_t *selector,
     free(l2g);
 }
 
-int main(int argc, char **argv)
+#define MAX_KERNELS 64
+
+typedef struct {
+    char name[48];
+    fxp_metric_acc_t acc;
+} named_metric_t;
+
+static int find_or_add(named_metric_t *table, int *count, const char *name)
 {
-    int max_windows = arg_value(argc, argv, "--max-windows", 4);
+    for (int i = 0; i < *count; i++) {
+        if (strcmp(table[i].name, name) == 0) return i;
+    }
+    if (*count >= MAX_KERNELS) return -1;
+    int idx = (*count)++;
+    snprintf(table[idx].name, sizeof(table[idx].name), "%s", name);
+    fxp_metric_init(&table[idx].acc);
+    return idx;
+}
 
-    fxp_metric_acc_t audio_feature_metrics[Number_AUDIO_Features];
-    fxp_metric_acc_t imu_feature_metrics[Number_IMU_Features];
-
-    for (int i = 0; i < Number_AUDIO_Features; i++) fxp_metric_init(&audio_feature_metrics[i]);
-    for (int i = 0; i < Number_IMU_Features; i++) fxp_metric_init(&imu_feature_metrics[i]);
+int main(void)
+{
+    named_metric_t audio_table[MAX_KERNELS];
+    named_metric_t imu_table[MAX_KERNELS];
+    int audio_n = 0;
+    int imu_n = 0;
 
     int n_audio_wins = ((AUDIO_LEN - WINDOW_SAMP_AUDIO) / AUDIO_STEP) + 1;
     int n_imu_wins = ((IMU_LEN - WINDOW_SAMP_IMU) / IMU_STEP) + 1;
-    if (max_windows > 0 && max_windows < n_audio_wins) n_audio_wins = max_windows;
-    if (max_windows > 0 && max_windows < n_imu_wins) n_imu_wins = max_windows;
 
     float *audio_ref_feats = (float *)malloc((size_t)Number_AUDIO_Features * sizeof(float));
     fxp_q16_t *audio_fxp_feats = (fxp_q16_t *)malloc((size_t)Number_AUDIO_Features * sizeof(fxp_q16_t));
@@ -348,7 +355,8 @@ int main(int argc, char **argv)
         for (int i = 0; i < Number_AUDIO_Features; i++) {
             if (!audio_features_selector[i]) continue;
             float fxp_v = FXP_TO_FLOAT(audio_fxp_feats[i], FXP_PIPE_FRAC);
-            fxp_metric_add(&audio_feature_metrics[i], audio_ref_feats[i], fxp_v);
+            int slot = find_or_add(audio_table, &audio_n, audio_feature_name(i));
+            if (slot >= 0) fxp_metric_add(&audio_table[slot].acc, audio_ref_feats[i], fxp_v);
         }
     }
 
@@ -380,21 +388,22 @@ int main(int argc, char **argv)
         for (int i = 0; i < Number_IMU_Features; i++) {
             if (!imu_features_selector[i]) continue;
             float fxp_v = FXP_TO_FLOAT(imu_fxp_feats[i], FXP_PIPE_FRAC);
-            fxp_metric_add(&imu_feature_metrics[i], imu_ref_feats[i], fxp_v);
+            char name[64];
+            imu_feature_name(i, name, sizeof(name));
+            int slot = find_or_add(imu_table, &imu_n, name);
+            if (slot >= 0) fxp_metric_add(&imu_table[slot].acc, imu_ref_feats[i], fxp_v);
         }
     }
 
     free(imu_q5);
 
-    for (int i = 0; i < Number_AUDIO_Features; i++) {
-        if (!audio_features_selector[i] || audio_feature_metrics[i].n <= 0) continue;
-        fxp_metric_print_stage("FXP_STAGE", "single-kernel", "audio", audio_feature_name(i), "Q16", &audio_feature_metrics[i]);
+    for (int i = 0; i < audio_n; i++) {
+        if (audio_table[i].acc.n <= 0) continue;
+        fxp_metric_print_kernel_acc("audio", audio_table[i].name, &audio_table[i].acc);
     }
-    for (int i = 0; i < Number_IMU_Features; i++) {
-        if (!imu_features_selector[i] || imu_feature_metrics[i].n <= 0) continue;
-        char name[64];
-        imu_feature_name(i, name, sizeof(name));
-        fxp_metric_print_stage("FXP_STAGE", "single-kernel", "imu", name, "Q16", &imu_feature_metrics[i]);
+    for (int i = 0; i < imu_n; i++) {
+        if (imu_table[i].acc.n <= 0) continue;
+        fxp_metric_print_kernel_acc("imu", imu_table[i].name, &imu_table[i].acc);
     }
 
     return 0;

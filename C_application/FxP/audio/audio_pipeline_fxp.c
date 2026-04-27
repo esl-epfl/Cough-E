@@ -20,6 +20,20 @@
 /*  FFT feature kernels + block                                               */
 /* -------------------------------------------------------------------------- */
 
+typedef struct {
+    const uq12_20_t *mags_q20;
+    const uq12_20_t *freqs_q20;
+    int16_t len;
+    uq15_17_t sum_mags_q17;
+} audio_fft_view_t;
+
+typedef struct {
+    const uq18_14_t *proxy_q14;
+    const int32_t *log_proxy_q11;
+    const uq12_20_t *freqs_q20;
+    int16_t len;
+} audio_psd_view_t;
+
 #define FXP_FFT_ROLLOFF_95_Q16 ((uint32_t)62259U) /* round(0.95 * 2^16) */
 
 /* freq_q20 - centroid_q21, returned in Q13.19. */
@@ -133,9 +147,6 @@ static void _write_fft_features(const int8_t *features_selector,
     uq10_21_t centroid_q21 = 0;
     if (need_centroid) {
         centroid_q21 = _centroid(view);
-        if (features_selector[SPECTRAL_CENTROID]) {
-            feats_q16[SPECTRAL_CENTROID] = fxp_q16_from_u32(centroid_q21, FXP_FRAC_AUDIO_FFT_CENTROID);
-        }
     }
 
     uq11_5_t spread_q5 = 0;

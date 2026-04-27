@@ -13,9 +13,7 @@ Usage:
     python C_application/evaluation/evaluate.py
     python C_application/evaluation/evaluate.py --mode fxp
     python C_application/evaluation/evaluate.py --mode fxp --twiddle 16
-
-FxP kernel error metrics live in:
-    python C_application/evaluation/fxp/fxp_harness.py ...
+    python C_application/evaluation/evaluate.py --mode fxp-error
 """
 
 import argparse
@@ -84,6 +82,9 @@ BUILD_DIR = os.path.join(C_APP_DIR, "build")
 EXECUTABLE = os.path.join(BUILD_DIR, "cough-e")
 
 DEFAULT_DATASET_PATH = os.path.join(REPO_ROOT, "Datasets", "full_dataset_test")
+
+FXP_DIR = os.path.join(os.path.dirname(__file__), "fxp")
+FXP_ERROR_HARNESS_BIN = os.path.join(FXP_DIR, "fxp_stage_harness")
 
 # Original main.h content for backup/restore
 MAIN_H_ORIGINAL = None
@@ -269,7 +270,7 @@ def score_recording(gt_events, pred_events, duration):
     if Annotation is None or scoring is None:
         raise RuntimeError(
             "timescoring is required for ML event metrics. "
-            "Install dependencies or run evaluation/fxp/fxp_harness.py for FxP error metrics."
+            "Install dependencies or run evaluate.py --mode fxp-error for FxP error metrics."
         )
 
     gt_mask = create_binary_mask(gt_events, duration)
@@ -494,6 +495,151 @@ def print_results(results, aggregate):
 
     return per_subject
 
+# ──────────────────────────────────────────────
+#  FxP-vs-float kernel error mode
+# ──────────────────────────────────────────────
+
+def _compile_fxp_error_harness(audio_relpath, imu_relpath, twiddle):
+    """Recompile the FxP error harness against a specific recording's headers."""
+    header_flags = (
+        f"-include input_data/{audio_relpath} "
+        f"-include input_data/{imu_relpath}"
+    )
+    cmd = [
+        "make", "-B", "-C", FXP_DIR, "fxp_stage_harness",
+        f"FFT_MODE=-DFIXED_POINT={twiddle}",
+        f"HEADER_FLAGS={header_flags}",
+    ]
+    result = subprocess.run(cmd, capture_output=True, text=True)
+    return result.returncode == 0, result.stderr
+
+
+def _parse_fxp_kernel_acc(output):
+    """Parse FXP_KERNEL_ACC lines into {(block, kernel): accumulator dict}."""
+    rows = {}
+    for line in output.splitlines():
+        if not line.startswith("FXP_KERNEL_ACC,"):
+            continue
+        kv = {}
+        for part in line.split(",")[1:]:
+            if "=" in part:
+                k, v = part.split("=", 1)
+                kv[k] = v
+        block = kv.get("block", "")
+        kernel = kv.get("kernel", "")
+        rows[(block, kernel)] = {
+            "n": int(kv.get("n", "0")),
+            "sum_sq_err": float(kv.get("sum_sq_err", "0")),
+            "sum_sq_ref": float(kv.get("sum_sq_ref", "0")),
+            "max_abs_err": float(kv.get("max_abs_err", "0")),
+            "max_abs_ref": float(kv.get("max_abs_ref", "0")),
+        }
+    return rows
+
+
+def _merge_acc(into, frm):
+    """Sum partial accumulators (per recording) into a running total."""
+    for key, src in frm.items():
+        dst = into.setdefault(key, {
+            "n": 0, "sum_sq_err": 0.0, "sum_sq_ref": 0.0,
+            "max_abs_err": 0.0, "max_abs_ref": 0.0,
+        })
+        dst["n"] += src["n"]
+        dst["sum_sq_err"] += src["sum_sq_err"]
+        dst["sum_sq_ref"] += src["sum_sq_ref"]
+        if src["max_abs_err"] > dst["max_abs_err"]:
+            dst["max_abs_err"] = src["max_abs_err"]
+        if src["max_abs_ref"] > dst["max_abs_ref"]:
+            dst["max_abs_ref"] = src["max_abs_ref"]
+
+
+def _acc_to_metrics(acc):
+    """Convert raw accumulator state to (rmse_pct, max_abs_pct)."""
+    if acc["n"] <= 0 or acc["sum_sq_ref"] <= 0:
+        rmse_pct = 0.0
+    else:
+        import math
+        rmse_pct = 100.0 * math.sqrt(acc["sum_sq_err"] / acc["sum_sq_ref"])
+    if acc["max_abs_ref"] > 0:
+        max_abs_pct = 100.0 * acc["max_abs_err"] / acc["max_abs_ref"]
+    else:
+        max_abs_pct = 0.0
+    return rmse_pct, max_abs_pct
+
+
+def _print_fxp_table(table, header):
+    """Print kernel error rows grouped by block (audio first, then imu)."""
+    print(header)
+    for block in ("audio", "imu"):
+        kernels = sorted(k for (b, k) in table if b == block)
+        for kernel in kernels:
+            rmse_pct, max_abs_pct = _acc_to_metrics(table[(block, kernel)])
+            print(f"  {block:<5}  {kernel:<22}  RMSE%={rmse_pct:7.3f}  MaxAbs%={max_abs_pct:7.3f}")
+
+
+def _evaluate_fxp_errors(dataset_path, twiddle):
+    """Loop the dataset, compile the FxP harness per recording, accumulate kernel errors."""
+    overall = {}
+    per_subject = {}
+    n_recordings = 0
+    total_duration = 0.0
+
+    for subj_id in get_subject_ids(dataset_path):
+        print(f"\n=== Subject {subj_id} ===", flush=True)
+        subj_acc = {}
+        for trial in TRIALS:
+            for mov in MOVEMENTS:
+                for noise in NOISES:
+                    for sound in SOUNDS:
+                        rec_id = f"t{trial}_{mov}_{noise}_{sound}"
+                        result = transform_recording(subj_id, trial, mov, noise, sound,
+                                                     dataset_path, INPUT_DATA_DIR)
+                        if result is None:
+                            continue
+                        suffix, audio_relpath, imu_relpath, _ = result
+
+                        ok, err = _compile_fxp_error_harness(audio_relpath, imu_relpath, twiddle)
+                        if not ok:
+                            print(f"  {rec_id}: harness compile FAILED\n{err}", flush=True)
+                            continue
+
+                        try:
+                            run = subprocess.run([FXP_ERROR_HARNESS_BIN], capture_output=True,
+                                                 text=True, timeout=120)
+                        except subprocess.TimeoutExpired:
+                            print(f"  {rec_id}: TIMEOUT", flush=True)
+                            continue
+
+                        rows = _parse_fxp_kernel_acc(run.stdout)
+                        if not rows:
+                            print(f"  {rec_id}: no FXP_KERNEL_ACC output", flush=True)
+                            continue
+
+                        _merge_acc(subj_acc, rows)
+                        _merge_acc(overall, rows)
+                        n_recordings += 1
+                        total_duration += get_recording_duration(dataset_path, subj_id,
+                                                                 trial, mov, noise, sound)
+                        n_kernels = len(rows)
+                        print(f"  {rec_id}: {n_kernels} kernels accumulated", flush=True)
+
+        per_subject[subj_id] = subj_acc
+        if subj_acc:
+            _print_fxp_table(subj_acc, f"\nSubject {subj_id}:")
+
+    bar = "=" * 70
+    print(f"\n{bar}")
+    print(f"OVERALL ({n_recordings} recordings, {total_duration / 3600.0:.3f} hrs)")
+    print(bar)
+    if overall:
+        for block in ("audio", "imu"):
+            kernels = sorted(k for (b, k) in overall if b == block)
+            for kernel in kernels:
+                rmse_pct, max_abs_pct = _acc_to_metrics(overall[(block, kernel)])
+                print(f"  {block:<5}  {kernel:<22}  RMSE%={rmse_pct:7.3f}  MaxAbs%={max_abs_pct:7.3f}")
+    print(bar)
+
+
 def _compile_flags_for_mode(mode, twiddle):
     if mode == "float":
         return ""
@@ -533,13 +679,16 @@ def main(argv=None):
     parser = argparse.ArgumentParser(
         description="Evaluate Cough-E ML metrics in float or FxP mode."
     )
-    parser.add_argument("--mode", choices=["float", "fxp"], default="float",
-                        help="Pipeline precision mode (default: float)")
+    parser.add_argument("--mode", choices=["float", "fxp", "fxp-error"], default="float",
+                        help="float / fxp ML metrics, or fxp-error for kernel-level FxP-vs-float error metrics")
     parser.add_argument("--twiddle", type=int, choices=[16, 32], default=32,
-                        help="KissFFT twiddle precision (used only in fxp mode)")
+                        help="KissFFT twiddle precision (used in fxp / fxp-error modes)")
 
     args = parser.parse_args(argv)
-    _run_mode_eval(args.mode, args.twiddle)
+    if args.mode == "fxp-error":
+        _evaluate_fxp_errors(DEFAULT_DATASET_PATH, args.twiddle)
+    else:
+        _run_mode_eval(args.mode, args.twiddle)
 
 
 if __name__ == "__main__":

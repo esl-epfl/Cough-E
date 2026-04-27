@@ -13,15 +13,18 @@ LIBS    = -lm
 QFMT_HEADER = $(ROOT)/FxP/core/fxp_qformats.h
 
 TARGET_STAGE     = fxp_stage_harness
-FFT_MODE ?= -DFIXED_POINT=16
+FFT_MODE     ?= -DFIXED_POINT=16
+HEADER_FLAGS ?=
 
 all: $(TARGET_STAGE)
 
 $(TARGET_STAGE): fxp_stage_harness.c fxp_metrics.h $(SRCS) $(QFMT_HEADER)
-	$(CC) $(CFLAGS) $(FFT_MODE) -o $@ fxp_stage_harness.c $(SRCS) $(INC) $(LIBS)
+	$(CC) $(CFLAGS) $(FFT_MODE) $(HEADER_FLAGS) -c -o fxp_stage_harness.o fxp_stage_harness.c $(INC)
+	$(CC) $(CFLAGS) $(FFT_MODE) -o $@ fxp_stage_harness.o $(SRCS) $(INC) $(LIBS)
+	rm -f fxp_stage_harness.o
 
 run: all
 	./$(TARGET_STAGE)
 
 clean:
-	rm -f $(TARGET_STAGE)
+	rm -rf $(TARGET_STAGE) $(TARGET_STAGE).dSYM
