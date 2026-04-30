@@ -18,9 +18,11 @@ Usage:
 
 import argparse
 import csv
+import hashlib
 import json
 import os
 import re
+import shutil
 import subprocess
 import sys
 from datetime import datetime
@@ -84,8 +86,6 @@ EXECUTABLE = os.path.join(BUILD_DIR, "cough-e")
 DEFAULT_DATASET_PATH = os.path.join(REPO_ROOT, "Datasets", "full_dataset_test")
 
 FXP_DIR = os.path.join(os.path.dirname(__file__), "fxp")
-FXP_ERROR_HARNESS_BIN = os.path.join(FXP_DIR, "fxp_stage_harness")
-FXP_PROGRESSIVE_HARNESS_BIN = os.path.join(FXP_DIR, "fxp_progressive_harness")
 
 # Original main.h content for backup/restore
 MAIN_H_ORIGINAL = None
@@ -95,6 +95,10 @@ CSV_FIELDNAMES = [
     "tp_evt", "fp_evt", "fn_evt", "se_evt", "ppv_evt", "f1_evt",
     "duration",
 ]
+
+
+class EvaluationError(RuntimeError):
+    """Raised when a real dataset recording cannot be evaluated."""
 
 
 # ──────────────────────────────────────────────
@@ -309,20 +313,20 @@ def evaluate_recording(subj_id, trial, mov, noise, sound,
     result = transform_recording(subj_id, trial, mov, noise, sound,
                                  dataset_path, input_data_dir)
     if result is None:
-        return None
+        raise EvaluationError(f"transform failed for {subj_id} t{trial} {mov} {noise} {sound}")
     suffix, audio_relpath, imu_relpath, bio_relpath = result
 
     update_main_h(audio_relpath, imu_relpath, bio_relpath)
 
     if not compile_c_app(extra_flags=evaluate_recording._extra_flags):
         print(f"  FAILED to compile for {suffix}")
-        return None
+        raise EvaluationError(f"C application compile failed for {suffix}")
 
     try:
         output = run_c_app()
     except subprocess.TimeoutExpired:
         print(f"  TIMEOUT for {suffix}")
-        return None
+        raise EvaluationError(f"C application timed out for {suffix}") from None
 
     pred_segments = parse_c_output(output)
     gt_events = load_ground_truth(dataset_path, subj_id, trial, mov, noise, sound)
@@ -349,28 +353,51 @@ def get_subject_ids(dataset_path):
     ])
 
 
+def _recording_path(dataset_path, subj_id, trial, mov, noise, sound):
+    return os.path.join(dataset_path, subj_id,
+                        f'trial_{trial}', f'mov_{mov}',
+                        f'background_noise_{noise}', sound)
+
+
+def iter_existing_recordings(dataset_path):
+    """Return the real non-empty dataset recordings in canonical evaluation order."""
+    recordings = []
+    for subj_id in get_subject_ids(dataset_path):
+        for trial in TRIALS:
+            for mov in MOVEMENTS:
+                for noise in NOISES:
+                    for sound in SOUNDS:
+                        rec_path = _recording_path(dataset_path, subj_id, trial, mov, noise, sound)
+                        if os.path.isdir(rec_path) and os.listdir(rec_path):
+                            recordings.append((subj_id, trial, mov, noise, sound))
+    return recordings
+
+
 def evaluate_subjects(dataset_path):
     """Evaluate all recordings. Backs up and restores main.h."""
     backup_main_h()
     all_results = []
+    recordings = iter_existing_recordings(dataset_path)
+    print(f"Expected recordings: {len(recordings)}")
 
     try:
-        for subj_id in get_subject_ids(dataset_path):
-            print(f"\n=== Subject {subj_id} ===")
-            for trial in TRIALS:
-                for mov in MOVEMENTS:
-                    for noise in NOISES:
-                        for sound in SOUNDS:
-                            rec_id = f"t{trial}_{mov}_{noise}_{sound}"
-                            result = evaluate_recording(
-                                subj_id, trial, mov, noise, sound,
-                                dataset_path, INPUT_DATA_DIR)
-                            if result is not None:
-                                all_results.append(result)
-                                print(f"  {rec_id}: TP_evt={result['tp_evt']} "
-                                      f"FP_evt={result['fp_evt']} FN_evt={result['fn_evt']}")
+        current_subject = None
+        for subj_id, trial, mov, noise, sound in recordings:
+            if subj_id != current_subject:
+                current_subject = subj_id
+                print(f"\n=== Subject {subj_id} ===")
+            rec_id = f"t{trial}_{mov}_{noise}_{sound}"
+            result = evaluate_recording(
+                subj_id, trial, mov, noise, sound,
+                dataset_path, INPUT_DATA_DIR)
+            all_results.append(result)
+            print(f"  {rec_id}: TP_evt={result['tp_evt']} "
+                  f"FP_evt={result['fp_evt']} FN_evt={result['fn_evt']}")
     finally:
         restore_main_h()
+
+    if len(all_results) != len(recordings):
+        raise EvaluationError(f"processed {len(all_results)} of {len(recordings)} expected recordings")
 
     return all_results
 
@@ -500,23 +527,49 @@ def print_results(results, aggregate):
 #  FxP-vs-float kernel error mode
 # ──────────────────────────────────────────────
 
+def _fxp_build_tag(*parts):
+    """Create a compact unique tag for per-recording harness build artifacts."""
+    raw = "__".join(str(part) for part in parts)
+    safe = re.sub(r"[^A-Za-z0-9_]+", "_", raw).strip("_")
+    digest = hashlib.sha1(raw.encode("utf-8")).hexdigest()[:10]
+    return f"{safe[:80]}_{os.getpid()}_{digest}"
+
+
+def _cleanup_fxp_harness(binary_path, build_tag):
+    """Remove per-recording harness artifacts after the harness has run."""
+    if binary_path:
+        try:
+            os.remove(binary_path)
+        except FileNotFoundError:
+            pass
+        shutil.rmtree(f"{binary_path}.dSYM", ignore_errors=True)
+    if build_tag:
+        shutil.rmtree(os.path.join(FXP_DIR, ".build", build_tag), ignore_errors=True)
+
+
 def _compile_fxp_error_harness(audio_relpath, imu_relpath, twiddle):
     """Recompile the FxP error harness against a specific recording's headers."""
+    tag = _fxp_build_tag("stage", twiddle, audio_relpath, imu_relpath)
+    target = f"fxp_stage_harness_{tag}"
     header_flags = (
         f"-include input_data/{audio_relpath} "
         f"-include input_data/{imu_relpath}"
     )
     cmd = [
-        "make", "-B", "-C", FXP_DIR, "fxp_stage_harness",
+        "make", "-B", "-C", FXP_DIR, target,
+        f"TARGET_STAGE={target}",
+        f"BUILD_TAG={tag}",
         f"FFT_MODE=-DFIXED_POINT={twiddle}",
         f"HEADER_FLAGS={header_flags}",
     ]
     result = subprocess.run(cmd, capture_output=True, text=True)
-    return result.returncode == 0, result.stderr
+    return result.returncode == 0, result.stderr, os.path.join(FXP_DIR, ".build", tag, target), tag
 
 
 def _compile_fxp_progressive_harness(audio_relpath, imu_relpath, bio_relpath, twiddle):
     """Build the mixed float/FxP progressive feature-block harness."""
+    tag = _fxp_build_tag("progressive", twiddle, audio_relpath, imu_relpath, bio_relpath)
+    target = f"fxp_progressive_harness_{tag}"
     header_flags = (
         f"-DPROGRESSIVE_INPUTS_INJECTED "
         f"-include input_data/{audio_relpath} "
@@ -524,12 +577,14 @@ def _compile_fxp_progressive_harness(audio_relpath, imu_relpath, bio_relpath, tw
         f"-include input_data/{bio_relpath}"
     )
     cmd = [
-        "make", "-B", "-C", FXP_DIR, "fxp_progressive_harness",
+        "make", "-B", "-C", FXP_DIR, target,
+        f"TARGET_PROGRESSIVE={target}",
+        f"BUILD_TAG={tag}",
         f"FFT_MODE=-DFIXED_POINT={twiddle}",
         f"HEADER_FLAGS={header_flags}",
     ]
     result = subprocess.run(cmd, capture_output=True, text=True)
-    return result.returncode == 0, result.stderr
+    return result.returncode == 0, result.stderr, os.path.join(FXP_DIR, ".build", tag, target), tag
 
 
 def _parse_fxp_kernel_acc(output):
@@ -551,6 +606,7 @@ def _parse_fxp_kernel_acc(output):
             "sum_sq_ref": float(kv.get("sum_sq_ref", "0")),
             "max_abs_err": float(kv.get("max_abs_err", "0")),
             "max_abs_ref": float(kv.get("max_abs_ref", "0")),
+            "nonfinite": int(kv.get("nonfinite", "0")),
         }
     return rows
 
@@ -560,11 +616,12 @@ def _merge_acc(into, frm):
     for key, src in frm.items():
         dst = into.setdefault(key, {
             "n": 0, "sum_sq_err": 0.0, "sum_sq_ref": 0.0,
-            "max_abs_err": 0.0, "max_abs_ref": 0.0,
+            "max_abs_err": 0.0, "max_abs_ref": 0.0, "nonfinite": 0,
         })
         dst["n"] += src["n"]
         dst["sum_sq_err"] += src["sum_sq_err"]
         dst["sum_sq_ref"] += src["sum_sq_ref"]
+        dst["nonfinite"] += src.get("nonfinite", 0)
         if src["max_abs_err"] > dst["max_abs_err"]:
             dst["max_abs_err"] = src["max_abs_err"]
         if src["max_abs_ref"] > dst["max_abs_ref"]:
@@ -572,17 +629,25 @@ def _merge_acc(into, frm):
 
 
 def _acc_to_metrics(acc):
-    """Convert raw accumulator state to (rmse_pct, max_abs_pct)."""
+    """Convert raw accumulator state to percent error metrics.
+
+    RelL2% is normalized by reference energy. RMSE% and MaxAbs% share the
+    max-reference denominator, so RMSE% is guaranteed to be <= MaxAbs%.
+    """
+    import math
+
     if acc["n"] <= 0 or acc["sum_sq_ref"] <= 0:
-        rmse_pct = 0.0
+        rel_l2_pct = 0.0
     else:
-        import math
-        rmse_pct = 100.0 * math.sqrt(acc["sum_sq_err"] / acc["sum_sq_ref"])
+        rel_l2_pct = 100.0 * math.sqrt(acc["sum_sq_err"] / acc["sum_sq_ref"])
+
     if acc["max_abs_ref"] > 0:
+        rmse_pct = 100.0 * math.sqrt(acc["sum_sq_err"] / acc["n"]) / acc["max_abs_ref"]
         max_abs_pct = 100.0 * acc["max_abs_err"] / acc["max_abs_ref"]
     else:
+        rmse_pct = 0.0
         max_abs_pct = 0.0
-    return rmse_pct, max_abs_pct
+    return rel_l2_pct, rmse_pct, max_abs_pct
 
 
 def _print_fxp_table(table, header):
@@ -591,8 +656,11 @@ def _print_fxp_table(table, header):
     for block in ("audio", "imu"):
         kernels = sorted(k for (b, k) in table if b == block)
         for kernel in kernels:
-            rmse_pct, max_abs_pct = _acc_to_metrics(table[(block, kernel)])
-            print(f"  {block:<5}  {kernel:<22}  RMSE%={rmse_pct:7.3f}  MaxAbs%={max_abs_pct:7.3f}")
+            rel_l2_pct, rmse_pct, max_abs_pct = _acc_to_metrics(table[(block, kernel)])
+            nonfinite = table[(block, kernel)].get("nonfinite", 0)
+            suffix = f"  NonFinite={nonfinite}" if nonfinite else ""
+            print(f"  {block:<5}  {kernel:<22}  RelL2%={rel_l2_pct:7.3f}  "
+                  f"RMSE%={rmse_pct:7.3f}  MaxAbs%={max_abs_pct:7.3f}{suffix}")
 
 
 def _evaluate_fxp_errors(dataset_path, twiddle):
@@ -601,54 +669,74 @@ def _evaluate_fxp_errors(dataset_path, twiddle):
     per_subject = {}
     n_recordings = 0
     total_duration = 0.0
+    recordings = iter_existing_recordings(dataset_path)
+    print(f"Expected recordings: {len(recordings)}")
 
-    for subj_id in get_subject_ids(dataset_path):
-        print(f"\n=== Subject {subj_id} ===", flush=True)
-        subj_acc = {}
-        for trial in TRIALS:
-            for mov in MOVEMENTS:
-                for noise in NOISES:
-                    for sound in SOUNDS:
-                        rec_id = f"t{trial}_{mov}_{noise}_{sound}"
-                        result = transform_recording(subj_id, trial, mov, noise, sound,
-                                                     dataset_path, INPUT_DATA_DIR)
-                        if result is None:
-                            continue
-                        suffix, audio_relpath, imu_relpath, _ = result
+    current_subject = None
+    subj_acc = {}
+    for subj_id, trial, mov, noise, sound in recordings:
+        if subj_id != current_subject:
+            if current_subject is not None:
+                per_subject[current_subject] = subj_acc
+                _print_fxp_table(subj_acc, f"\nSubject {current_subject}:")
+            current_subject = subj_id
+            subj_acc = {}
+            print(f"\n=== Subject {subj_id} ===", flush=True)
 
-                        ok, err = _compile_fxp_error_harness(audio_relpath, imu_relpath, twiddle)
-                        if not ok:
-                            print(f"  {rec_id}: harness compile FAILED\n{err}", flush=True)
-                            continue
+        rec_id = f"t{trial}_{mov}_{noise}_{sound}"
+        result = transform_recording(subj_id, trial, mov, noise, sound,
+                                     dataset_path, INPUT_DATA_DIR)
+        if result is None:
+            raise EvaluationError(f"transform failed for {subj_id} {rec_id}")
+        suffix, audio_relpath, imu_relpath, _ = result
 
-                        try:
-                            run = subprocess.run([FXP_ERROR_HARNESS_BIN], capture_output=True,
-                                                 text=True, timeout=120)
-                        except subprocess.TimeoutExpired:
-                            print(f"  {rec_id}: TIMEOUT", flush=True)
-                            continue
+        ok, err, harness_bin, build_tag = _compile_fxp_error_harness(audio_relpath, imu_relpath, twiddle)
+        if not ok:
+            print(f"  {rec_id}: harness compile FAILED\n{err}", flush=True)
+            _cleanup_fxp_harness(harness_bin, build_tag)
+            raise EvaluationError(f"FxP error harness compile failed for {suffix}")
 
-                        rows = _parse_fxp_kernel_acc(run.stdout)
-                        if not rows:
-                            print(f"  {rec_id}: no FXP_KERNEL_ACC output", flush=True)
-                            continue
+        try:
+            run = subprocess.run([harness_bin], capture_output=True,
+                                 text=True, timeout=120)
+        except subprocess.TimeoutExpired:
+            print(f"  {rec_id}: TIMEOUT", flush=True)
+            raise EvaluationError(f"FxP error harness timed out for {suffix}") from None
+        finally:
+            _cleanup_fxp_harness(harness_bin, build_tag)
 
-                        _merge_acc(subj_acc, rows)
-                        _merge_acc(overall, rows)
-                        n_recordings += 1
-                        total_duration += get_recording_duration(dataset_path, subj_id,
-                                                                 trial, mov, noise, sound)
-                        n_kernels = len(rows)
-                        print(f"  {rec_id}: {n_kernels} kernels accumulated", flush=True)
+        if run.returncode != 0:
+            print(f"  {rec_id}: harness run FAILED\n{run.stderr}", flush=True)
+            raise EvaluationError(f"FxP error harness run failed for {suffix}")
 
-        per_subject[subj_id] = subj_acc
-        if subj_acc:
-            _print_fxp_table(subj_acc, f"\nSubject {subj_id}:")
+        rows = _parse_fxp_kernel_acc(run.stdout)
+        if not rows:
+            print(f"  {rec_id}: no FXP_KERNEL_ACC output", flush=True)
+            raise EvaluationError(f"FxP error harness produced no kernel metrics for {suffix}")
+
+        _merge_acc(subj_acc, rows)
+        _merge_acc(overall, rows)
+        n_recordings += 1
+        total_duration += get_recording_duration(dataset_path, subj_id,
+                                                 trial, mov, noise, sound)
+        n_kernels = len(rows)
+        print(f"  {rec_id}: {n_kernels} kernels accumulated", flush=True)
+
+    if current_subject is not None:
+        per_subject[current_subject] = subj_acc
+        _print_fxp_table(subj_acc, f"\nSubject {current_subject}:")
+
+    if n_recordings != len(recordings):
+        raise EvaluationError(f"processed {n_recordings} of {len(recordings)} expected recordings")
 
     bar = "=" * 70
     print(f"\n{bar}")
     print(f"OVERALL ({n_recordings} recordings, {total_duration / 3600.0:.3f} hrs)")
     print(bar)
+    if overall:
+        _print_fxp_table(overall, "Dataset-wide kernel error:")
+    else:
+        print("  No FXP kernel accumulators were collected.")
 
 
 FXP_BLOCKS = [
@@ -662,23 +750,26 @@ def _evaluate_progressive_recording(subj_id, trial, mov, noise, sound,
     result = transform_recording(subj_id, trial, mov, noise, sound,
                                  dataset_path, input_data_dir)
     if result is None:
-        return None
+        raise EvaluationError(f"transform failed for {subj_id} t{trial} {mov} {noise} {sound}")
 
     suffix, audio_relpath, imu_relpath, bio_relpath = result
-    ok, err = _compile_fxp_progressive_harness(audio_relpath, imu_relpath, bio_relpath, twiddle)
+    ok, err, harness_bin, build_tag = _compile_fxp_progressive_harness(audio_relpath, imu_relpath, bio_relpath, twiddle)
     if not ok:
         print(f"  FAILED to compile progressive harness for {suffix}:\n{err}")
-        return None
+        _cleanup_fxp_harness(harness_bin, build_tag)
+        raise EvaluationError(f"progressive harness compile failed for {suffix}")
 
     try:
-        run = subprocess.run([FXP_PROGRESSIVE_HARNESS_BIN, fxp_block],
+        run = subprocess.run([harness_bin, fxp_block],
                              capture_output=True, text=True, timeout=60)
     except subprocess.TimeoutExpired:
         print(f"  TIMEOUT for {suffix}")
-        return None
+        raise EvaluationError(f"progressive harness timed out for {suffix}") from None
+    finally:
+        _cleanup_fxp_harness(harness_bin, build_tag)
     if run.returncode != 0:
         print(f"  progressive harness failed for {suffix}:\n{run.stderr}")
-        return None
+        raise EvaluationError(f"progressive harness failed for {suffix}")
 
     pred_segments = parse_c_output(run.stdout)
     gt_events = load_ground_truth(dataset_path, subj_id, trial, mov, noise, sound)
@@ -698,20 +789,22 @@ def _evaluate_progressive_recording(subj_id, trial, mov, noise, sound,
 
 def _evaluate_progressive_subjects(dataset_path, fxp_block, twiddle):
     all_results = []
-    for subj_id in get_subject_ids(dataset_path):
-        print(f"\n=== Subject {subj_id} ===")
-        for trial in TRIALS:
-            for mov in MOVEMENTS:
-                for noise in NOISES:
-                    for sound in SOUNDS:
-                        rec_id = f"t{trial}_{mov}_{noise}_{sound}"
-                        result = _evaluate_progressive_recording(
-                            subj_id, trial, mov, noise, sound,
-                            dataset_path, INPUT_DATA_DIR, fxp_block, twiddle)
-                        if result is not None:
-                            all_results.append(result)
-                            print(f"  {rec_id}: TP_evt={result['tp_evt']} "
-                                  f"FP_evt={result['fp_evt']} FN_evt={result['fn_evt']}")
+    recordings = iter_existing_recordings(dataset_path)
+    print(f"Expected recordings: {len(recordings)}")
+    current_subject = None
+    for subj_id, trial, mov, noise, sound in recordings:
+        if subj_id != current_subject:
+            current_subject = subj_id
+            print(f"\n=== Subject {subj_id} ===")
+        rec_id = f"t{trial}_{mov}_{noise}_{sound}"
+        result = _evaluate_progressive_recording(
+            subj_id, trial, mov, noise, sound,
+            dataset_path, INPUT_DATA_DIR, fxp_block, twiddle)
+        all_results.append(result)
+        print(f"  {rec_id}: TP_evt={result['tp_evt']} "
+              f"FP_evt={result['fp_evt']} FN_evt={result['fn_evt']}")
+    if len(all_results) != len(recordings):
+        raise EvaluationError(f"processed {len(all_results)} of {len(recordings)} expected recordings")
     return all_results
 
 
@@ -732,13 +825,6 @@ def _run_progressive_eval(fxp_block, twiddle):
                       build_per_subject_json(per_subject))
 
     return aggregate
-    if overall:
-        for block in ("audio", "imu"):
-            kernels = sorted(k for (b, k) in overall if b == block)
-            for kernel in kernels:
-                rmse_pct, max_abs_pct = _acc_to_metrics(overall[(block, kernel)])
-                print(f"  {block:<5}  {kernel:<22}  RMSE%={rmse_pct:7.3f}  MaxAbs%={max_abs_pct:7.3f}")
-    print(bar)
 
 
 def _compile_flags_for_mode(mode, twiddle):
@@ -788,14 +874,18 @@ def main(argv=None):
                         help="run mixed float/FxP ML metrics with only this feature block replaced by FxP outputs")
 
     args = parser.parse_args(argv)
-    if args.fxp_block:
-        if args.mode != "float":
-            parser.error("--fxp-block is an evaluation mode by itself; do not combine it with --mode fxp or --mode fxp-error")
-        _run_progressive_eval(args.fxp_block, args.twiddle)
-    elif args.mode == "fxp-error":
-        _evaluate_fxp_errors(DEFAULT_DATASET_PATH, args.twiddle)
-    else:
-        _run_mode_eval(args.mode, args.twiddle)
+    try:
+        if args.fxp_block:
+            if args.mode != "float":
+                parser.error("--fxp-block is an evaluation mode by itself; do not combine it with --mode fxp or --mode fxp-error")
+            _run_progressive_eval(args.fxp_block, args.twiddle)
+        elif args.mode == "fxp-error":
+            _evaluate_fxp_errors(DEFAULT_DATASET_PATH, args.twiddle)
+        else:
+            _run_mode_eval(args.mode, args.twiddle)
+    except EvaluationError as exc:
+        print(f"\nEvaluation aborted: {exc}", file=sys.stderr)
+        sys.exit(1)
 
 
 if __name__ == "__main__":

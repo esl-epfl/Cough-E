@@ -18,7 +18,11 @@
 #include <audio_model.h>
 #include <azc.h>
 #include <core/fxp_convert.h>
+#define audio_features fxp_audio_features
+#define imu_features fxp_imu_features
 #include <feature_extraction.h>
+#undef audio_features
+#undef imu_features
 #include <frequency_features.h>
 #include <helpers.h>
 #include <imu/imu_pipeline.h>
@@ -460,7 +464,7 @@ int main(void)
         }
 
         compute_audio_float_features(audio_features_selector, sig, WINDOW_SAMP_AUDIO, AUDIO_FS, audio_ref_feats);
-        audio_features(audio_features_selector, audio_q14, WINDOW_SAMP_AUDIO, AUDIO_FS, audio_fxp_feats);
+        fxp_audio_features(audio_features_selector, audio_q14, WINDOW_SAMP_AUDIO, AUDIO_FS, audio_fxp_feats);
 
         for (int i = 0; i < Number_AUDIO_Features; i++) {
             if (!audio_features_selector[i]) continue;
@@ -492,7 +496,7 @@ int main(void)
         }
 
         compute_imu_float_features(imu_features_selector, sig, WINDOW_SAMP_IMU, imu_ref_feats);
-        imu_features(imu_features_selector, imu_q5, WINDOW_SAMP_IMU, imu_fxp_feats);
+        fxp_imu_features(imu_features_selector, imu_q5, WINDOW_SAMP_IMU, imu_fxp_feats);
 
         for (int i = 0; i < Number_IMU_Features; i++) {
             if (!imu_features_selector[i]) continue;

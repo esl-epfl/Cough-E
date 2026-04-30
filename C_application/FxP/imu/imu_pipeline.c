@@ -9,17 +9,12 @@
 /*  FxP kernels                                                               */
 /* -------------------------------------------------------------------------- */
 
-#define FXP_KURT_FISHER_Q34_30 ((int64_t)3 << FXP_FRAC_IMU_KURTOSIS_RAW)
+#define FXP_KURT_FISHER_Q10_22 ((int32_t)3 << FXP_FRAC_IMU_KURTOSIS_RAW)
 
 static inline uq2_14_t _cf_l2g_result(uq5_11_t peak, uq7_9_t rms)
 {
     if (rms == 0) return 0;
     return (uq2_14_t)(((uint32_t)peak << 12) / (uint32_t)rms);
-}
-
-static inline uint64_t _shift_u64(uint64_t value, int shift)
-{
-    return (shift >= 0) ? (value << shift) : (value >> (-shift));
 }
 
 static int32_t _sample_as_s32(const void *sig, int16_t idx, uint8_t width_bits, uint8_t is_signed)
@@ -34,14 +29,12 @@ static int32_t _sample_as_s32(const void *sig, int16_t idx, uint8_t width_bits, 
         : (int32_t)((const uint32_t *)sig)[idx];
 }
 
-static uint32_t _rms(const void *sig, int16_t len,
-                        uint8_t width_bits, uint8_t is_signed,
-                        uint8_t pre_square_shift, int8_t post_mean_shift,
-                        uint8_t result_bits)
+static uint16_t _rms16(const void *sig, int16_t len,
+                       uint8_t width_bits, uint8_t is_signed,
+                       uint8_t pre_square_shift, int8_t post_mean_shift)
 {
     if (len <= 0) return 0;
 
-    uint64_t sum64 = 0;
     uint32_t sum32 = 0;
     for (int16_t i = 0; i < len; i++) {
         int32_t sample = _sample_as_s32(sig, i, width_bits, is_signed);
@@ -49,21 +42,21 @@ static uint32_t _rms(const void *sig, int16_t len,
             ? (uint32_t)fxp_mul_s32(sample, sample)
             : fxp_mul_u32((uint32_t)sample, (uint32_t)sample);
         sq >>= pre_square_shift;
-        if (result_bits > 16U) {
-            sum64 += (uint64_t)sq;
+        if (UINT32_MAX - sum32 < sq) {
+            sum32 = UINT32_MAX;
         } else {
             sum32 += sq;
         }
     }
 
-    if (result_bits > 16U) {
-        uint64_t mean = sum64 / (uint64_t)len;
-        uint64_t shifted = _shift_u64(mean, post_mean_shift);
-        return fxp_sat_u32_from_u64(fxp_sqrt64(shifted));
-    }
-
     uint32_t mean = sum32 / (uint32_t)len;
-    uint32_t shifted = (uint32_t)_shift_u64(mean, post_mean_shift);
+    uint32_t shifted;
+    if (post_mean_shift >= 0) {
+        uint8_t shift = (uint8_t)post_mean_shift;
+        shifted = (shift >= 32U || mean > (UINT32_MAX >> shift)) ? UINT32_MAX : (mean << shift);
+    } else {
+        shifted = mean >> (uint8_t)(-post_mean_shift);
+    }
     return fxp_sat_u16_from_u32(fxp_sqrt32(shifted));
 }
 
@@ -79,7 +72,10 @@ static uint32_t _line_length(const void *sig, int16_t len,
         int32_t b = _sample_as_s32(sig, i, width_bits, is_signed);
         accum += ((uint32_t)fxp_abs_s32(a - b)) >> diff_shift;
     }
-    return (uint32_t)(((uint64_t)accum << result_shift) / (uint32_t)(len - 1));
+    if (result_shift >= 32U || accum > (UINT32_MAX >> result_shift)) {
+        return UINT32_MAX;
+    }
+    return (accum << result_shift) / (uint32_t)(len - 1);
 }
 
 static inline int32_t _kurt_mean(int32_t accum_q5, int16_t n)
@@ -93,7 +89,7 @@ static inline int16_t _kurt_centered(q11_5_t sample_q5, int32_t mean_q10)
     return (int16_t)((((int32_t)sample_q5 * 32) - mean_q10 + 16) >> 5);
 }
 
-static q34_30_t _kurtosis_raw(const q11_5_t *sig, int16_t len)
+static q10_22_t _kurtosis_raw(const q11_5_t *sig, int16_t len)
 {
     if (len <= 0) return 0;
 
@@ -125,12 +121,13 @@ static q34_30_t _kurtosis_raw(const q11_5_t *sig, int16_t len)
         sum_x4 += fxp_mul_u64(c2, c2);
     }
 
-    /* sum_x4 is UQ16.20 and denom is UQ20.44; shift by 24 to land in Q34.30. */
-    uint64_t denom_shifted = (uint64_t)denom >> FXP_FRAC_IMU_KURTOSIS_RAW;
+    /* sum_x4 is UQ16.20 and denom is UQ20.44; shift by 16 to land in the Q10.22 carrier. */
+    uint64_t denom_shifted = (uint64_t)denom >> 30U;
     if (denom_shifted == 0) return 0;
 
-    q34_30_t normalized = (q34_30_t)((sum_x4 << 24) / denom_shifted);
-    return normalized - FXP_KURT_FISHER_Q34_30;
+    uint64_t normalized = (sum_x4 << 16) / denom_shifted;
+    if (normalized > (uint64_t)INT32_MAX) normalized = (uint64_t)INT32_MAX;
+    return (q10_22_t)((int32_t)normalized - FXP_KURT_FISHER_Q10_22);
 }
 
 static uq5_11_t _max_l2g(const uq5_11_t *sig, int16_t len)
@@ -159,7 +156,10 @@ uq5_11_t imu_l2_norm_gyro_from_raw(q11_5_t gx, q11_5_t gy, q11_5_t gz)
                  + (uint32_t)fxp_mul_s32(gy, gy)
                  + (uint32_t)fxp_mul_s32(gz, gz);
 
-    return (uq5_11_t)fxp_sat_u16_from_u32((uint32_t)fxp_sqrt64((uint64_t)sum << 12));
+    if (sum > (UINT32_MAX >> 12U)) {
+        return UINT16_MAX;
+    }
+    return (uq5_11_t)fxp_sat_u16_from_u32(fxp_sqrt32(sum << 12U));
 }
 
 typedef struct {
@@ -332,15 +332,15 @@ static void _run_raw_feature(const int8_t *features_selector,
     switch (local) {
         case LINE_LENGTH:
             *out = fxp_q16_from_u32(
-                _line_length(sig->data.raw_data, sig->len, 16U, 1U, 0U, 18U),
+                _line_length(sig->data.raw_data, sig->len, 16U, 1U, 0U, 4U),
                 FXP_FRAC_IMU_LINE_LENGTH_RAW);
             return;
         case KURTOSIS:
-            *out = fxp_q16_from_s64(_kurtosis_raw(sig->data.raw_data, sig->len), FXP_FRAC_IMU_KURTOSIS_RAW);
+            *out = fxp_q16_from_s32(_kurtosis_raw(sig->data.raw_data, sig->len), FXP_FRAC_IMU_KURTOSIS_RAW);
             return;
         case ROOT_MEANS_SQUARED_IMU:
             *out = fxp_q16_from_u32(
-                _rms(sig->data.raw_data, sig->len, 16U, 1U, 0U, 22, 32U),
+                _rms16(sig->data.raw_data, sig->len, 16U, 1U, 3U, -1),
                 FXP_FRAC_IMU_RMS_RAW);
             return;
         default:
@@ -358,7 +358,7 @@ static void _run_l2a_feature(const imu_sig_view_t *sig, uint8_t local, fxp_q16_t
 {
     if (local == ROOT_MEANS_SQUARED_IMU) {
         *out = fxp_q16_from_u32(
-            _rms(sig->data.l2a_data, sig->len, 16U, 0U, 5U, -1, 16U),
+            _rms16(sig->data.l2a_data, sig->len, 16U, 0U, 5U, -1),
             FXP_FRAC_IMU_RMS_L2A);
         return;
     }
@@ -380,11 +380,11 @@ static void _run_l2g_feature(const imu_sig_view_t *sig, uint8_t local, fxp_q16_t
             return;
         case ROOT_MEANS_SQUARED_IMU:
             *out = fxp_q16_from_u32(
-                _rms(sig->data.l2g_data, sig->len, 16U, 0U, 3U, -1, 16U),
+                _rms16(sig->data.l2g_data, sig->len, 16U, 0U, 3U, -1),
                 FXP_FRAC_IMU_RMS_L2G);
             return;
         case CREST_FACTOR_IMU: {
-            uq7_9_t rms = (uq7_9_t)_rms(sig->data.l2g_data, sig->len, 16U, 0U, 3U, -1, 16U);
+            uq7_9_t rms = (uq7_9_t)_rms16(sig->data.l2g_data, sig->len, 16U, 0U, 3U, -1);
             uq5_11_t peak = _max_l2g(sig->data.l2g_data, sig->len);
             uq2_14_t cf = (rms > 0U) ? _cf_l2g_result(peak, rms) : 0U;
             *out = fxp_q16_from_u32((uint32_t)cf, FXP_FRAC_IMU_CREST_L2G);

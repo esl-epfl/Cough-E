@@ -188,7 +188,9 @@ def transform_recording(subj_id, trial, mov, noise, sound, dataset_path, output_
     imu_file = f"imu_input_{suffix}.h"
     bio_file = f"bio_input_{subj_id}.h"
 
-    if os.path.exists(os.path.join(subj_dir, audio_file)):
+    if (os.path.exists(os.path.join(subj_dir, audio_file)) and
+            os.path.exists(os.path.join(subj_dir, imu_file)) and
+            os.path.exists(os.path.join(subj_dir, bio_file))):
         return suffix, f"{subj_id}/{audio_file}", f"{subj_id}/{imu_file}", f"{subj_id}/{bio_file}"
 
     # Load and downsample audio

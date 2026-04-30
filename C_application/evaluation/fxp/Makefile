@@ -6,6 +6,7 @@ CC      = gcc
 ROOT    = ../..
 SRCS    = $(wildcard $(ROOT)/Src/*.c) $(wildcard $(ROOT)/kiss_fftr/*.c) $(wildcard $(ROOT)/FxP/imu/*.c) $(wildcard $(ROOT)/FxP/audio/*.c)
 FLOAT_SRCS = $(filter-out $(ROOT)/Src/fsm_control.c,$(wildcard $(ROOT)/Src/*.c)) $(wildcard $(ROOT)/kiss_fftr/*.c)
+STAGE_FLOAT_SRCS = $(filter-out $(ROOT)/Src/feature_extraction.c,$(FLOAT_SRCS))
 INC     = -I$(ROOT)/Inc -I$(ROOT)/FxP -I$(ROOT) -I$(ROOT)/kiss_fftr -I$(ROOT)/range_analysis
 CFLAGS  = -Wall -Wextra -Wno-unused-function -std=c11 -g
 LIBS    = -lm
@@ -17,13 +18,28 @@ TARGET_STAGE = fxp_stage_harness
 TARGET_PROGRESSIVE = fxp_progressive_harness
 FFT_MODE     ?= -DFIXED_POINT=16
 HEADER_FLAGS ?=
+BUILD_TAG    ?= default
+OBJDIR       = .build/$(BUILD_TAG)
+STAGE_BIN    = $(OBJDIR)/$(TARGET_STAGE)
+PROGRESSIVE_BIN = $(OBJDIR)/$(TARGET_PROGRESSIVE)
+
+STAGE_OBJ = $(OBJDIR)/fxp_stage_harness.o
+STAGE_FXP_OBJS = \
+	$(OBJDIR)/fxp_feature_extraction_stage.o \
+	$(OBJDIR)/fxp_audio_pipeline_stage.o \
+	$(OBJDIR)/fxp_imu_pipeline_stage.o \
+	$(OBJDIR)/fxp_kiss_fft_stage.o \
+	$(OBJDIR)/fxp_kiss_fftr_stage.o
+PROGRESSIVE_OBJS = \
+	$(OBJDIR)/fxp_progressive_harness.o \
+	$(OBJDIR)/fxp_audio_pipeline_prog.o \
+	$(OBJDIR)/fxp_imu_pipeline_prog.o \
+	$(OBJDIR)/fxp_kiss_fft_prog.o \
+	$(OBJDIR)/fxp_kiss_fftr_prog.o
+
+.PHONY: all run clean $(TARGET_STAGE) $(TARGET_PROGRESSIVE)
 
 all: $(TARGET_STAGE)
-
-$(TARGET_STAGE): fxp_stage_harness.c fxp_metrics.h $(SRCS) $(QFMT_HEADER)
-	$(CC) $(CFLAGS) -DFXP_MODE $(FFT_MODE) $(HEADER_FLAGS) -c -o fxp_stage_harness.o fxp_stage_harness.c $(INC)
-	$(CC) $(CFLAGS) -DFXP_MODE $(FFT_MODE) -o $@ fxp_stage_harness.o $(SRCS) $(INC) $(LIBS)
-	rm -f fxp_stage_harness.o
 
 KISS_RENAME = \
 	-Dkiss_fft_alloc=fxp_kiss_fft_alloc \
@@ -38,17 +54,35 @@ KISS_RENAME = \
 	-Dinit_super_twiddles=fxp_init_super_twiddles \
 	-Dtostring=fxp_tostring
 
-$(TARGET_PROGRESSIVE): fxp_progressive_harness.c $(FLOAT_SRCS) $(ROOT)/FxP/audio/audio_pipeline_fxp.c $(ROOT)/FxP/imu/imu_pipeline.c $(ROOT)/kiss_fftr/kiss_fft.c $(ROOT)/kiss_fftr/kiss_fftr.c $(QFMT_HEADER)
-	$(CC) $(CFLAGS) $(HEADER_FLAGS) -c -o fxp_progressive_harness.o fxp_progressive_harness.c $(INC)
-	$(CC) $(CFLAGS) -DFXP_MODE $(FFT_MODE) $(KISS_RENAME) -c -o fxp_audio_pipeline_prog.o $(ROOT)/FxP/audio/audio_pipeline_fxp.c $(INC)
-	$(CC) $(CFLAGS) -DFXP_MODE $(FFT_MODE) -c -o fxp_imu_pipeline_prog.o $(ROOT)/FxP/imu/imu_pipeline.c $(INC)
-	$(CC) $(CFLAGS) $(FFT_MODE) $(KISS_RENAME) -c -o fxp_kiss_fft_prog.o $(ROOT)/kiss_fftr/kiss_fft.c $(INC)
-	$(CC) $(CFLAGS) $(FFT_MODE) $(KISS_RENAME) -c -o fxp_kiss_fftr_prog.o $(ROOT)/kiss_fftr/kiss_fftr.c $(INC)
-	$(CC) $(CFLAGS) -o $@ fxp_progressive_harness.o fxp_audio_pipeline_prog.o fxp_imu_pipeline_prog.o fxp_kiss_fft_prog.o fxp_kiss_fftr_prog.o $(FLOAT_SRCS) $(INC) $(LIBS)
-	rm -f fxp_progressive_harness.o fxp_audio_pipeline_prog.o fxp_imu_pipeline_prog.o fxp_kiss_fft_prog.o fxp_kiss_fftr_prog.o
+FXP_FEATURE_RENAME = \
+	-Daudio_features=fxp_audio_features \
+	-Dimu_features=fxp_imu_features
+
+$(TARGET_STAGE): $(STAGE_BIN)
+
+$(STAGE_BIN): fxp_stage_harness.c fxp_metrics.h $(STAGE_FLOAT_SRCS) $(ROOT)/Src/feature_extraction.c $(ROOT)/FxP/audio/audio_pipeline_fxp.c $(ROOT)/FxP/imu/imu_pipeline.c $(ROOT)/kiss_fftr/kiss_fft.c $(ROOT)/kiss_fftr/kiss_fftr.c $(QFMT_HEADER)
+	mkdir -p $(OBJDIR)
+	$(CC) $(CFLAGS) -DFXP_MODE $(FFT_MODE) $(HEADER_FLAGS) -c -o $(STAGE_OBJ) fxp_stage_harness.c $(INC)
+	$(CC) $(CFLAGS) -DFXP_MODE $(FFT_MODE) $(FXP_FEATURE_RENAME) $(KISS_RENAME) -c -o $(OBJDIR)/fxp_feature_extraction_stage.o $(ROOT)/Src/feature_extraction.c $(INC)
+	$(CC) $(CFLAGS) -DFXP_MODE $(FFT_MODE) $(KISS_RENAME) -c -o $(OBJDIR)/fxp_audio_pipeline_stage.o $(ROOT)/FxP/audio/audio_pipeline_fxp.c $(INC)
+	$(CC) $(CFLAGS) -DFXP_MODE $(FFT_MODE) -c -o $(OBJDIR)/fxp_imu_pipeline_stage.o $(ROOT)/FxP/imu/imu_pipeline.c $(INC)
+	$(CC) $(CFLAGS) $(FFT_MODE) $(KISS_RENAME) -c -o $(OBJDIR)/fxp_kiss_fft_stage.o $(ROOT)/kiss_fftr/kiss_fft.c $(INC)
+	$(CC) $(CFLAGS) $(FFT_MODE) $(KISS_RENAME) -c -o $(OBJDIR)/fxp_kiss_fftr_stage.o $(ROOT)/kiss_fftr/kiss_fftr.c $(INC)
+	$(CC) $(CFLAGS) -o $@ $(STAGE_OBJ) $(STAGE_FXP_OBJS) $(STAGE_FLOAT_SRCS) $(INC) $(LIBS)
+
+$(TARGET_PROGRESSIVE): $(PROGRESSIVE_BIN)
+
+$(PROGRESSIVE_BIN): fxp_progressive_harness.c $(FLOAT_SRCS) $(ROOT)/FxP/audio/audio_pipeline_fxp.c $(ROOT)/FxP/imu/imu_pipeline.c $(ROOT)/kiss_fftr/kiss_fft.c $(ROOT)/kiss_fftr/kiss_fftr.c $(QFMT_HEADER)
+	mkdir -p $(OBJDIR)
+	$(CC) $(CFLAGS) $(HEADER_FLAGS) -c -o $(OBJDIR)/fxp_progressive_harness.o fxp_progressive_harness.c $(INC)
+	$(CC) $(CFLAGS) -DFXP_MODE $(FFT_MODE) $(KISS_RENAME) -c -o $(OBJDIR)/fxp_audio_pipeline_prog.o $(ROOT)/FxP/audio/audio_pipeline_fxp.c $(INC)
+	$(CC) $(CFLAGS) -DFXP_MODE $(FFT_MODE) -c -o $(OBJDIR)/fxp_imu_pipeline_prog.o $(ROOT)/FxP/imu/imu_pipeline.c $(INC)
+	$(CC) $(CFLAGS) $(FFT_MODE) $(KISS_RENAME) -c -o $(OBJDIR)/fxp_kiss_fft_prog.o $(ROOT)/kiss_fftr/kiss_fft.c $(INC)
+	$(CC) $(CFLAGS) $(FFT_MODE) $(KISS_RENAME) -c -o $(OBJDIR)/fxp_kiss_fftr_prog.o $(ROOT)/kiss_fftr/kiss_fftr.c $(INC)
+	$(CC) $(CFLAGS) -o $@ $(PROGRESSIVE_OBJS) $(FLOAT_SRCS) $(INC) $(LIBS)
 
 run: all
-	./$(TARGET_STAGE)
+	./$(STAGE_BIN)
 
 clean:
-	rm -rf $(TARGET_STAGE) $(TARGET_STAGE).dSYM $(TARGET_PROGRESSIVE) $(TARGET_PROGRESSIVE).dSYM
+	rm -rf fxp_stage_harness fxp_stage_harness_* fxp_progressive_harness fxp_progressive_harness_* *.dSYM .build
