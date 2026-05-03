@@ -3,7 +3,7 @@
 
 #include <stdlib.h>
 #include <imu_features.h>
-#include <core/cough_backend.h>
+#include <core/fxp_core.h>
 
 typedef cough_feat_t feat_t;
 typedef cough_audio_sample_t audio_sample_t;

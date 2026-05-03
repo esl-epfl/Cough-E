@@ -15,7 +15,7 @@
 
 #include <audio_features.h>
 #include <audio_model.h>
-#include <core/fxp_convert.h>
+#include <core/fxp_core.h>
 #include <feature_extraction.h>
 #include <imu_features.h>
 #include <imu_model.h>

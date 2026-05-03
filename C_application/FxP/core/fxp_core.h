@@ -3,7 +3,31 @@
 #include <limits.h>
 #include <stdint.h>
 
-#include <core/fxp_qformats.h>
+/* -------------------------------------------------------------------------- */
+/*  Q-format fractional widths                                                */
+/* -------------------------------------------------------------------------- */
+
+#define FXP_FRAC_IMU_RAW 5
+#define FXP_FRAC_AUDIO_INPUT 14
+
+#define FXP_FRAC_IMU_RMS_RAW 3
+#define FXP_FRAC_IMU_RMS_L2A 3
+#define FXP_FRAC_IMU_RMS_L2G 9
+#define FXP_FRAC_IMU_LINE_LENGTH_RAW 9
+#define FXP_FRAC_IMU_LINE_LENGTH_L2G 9
+#define FXP_FRAC_IMU_KURTOSIS_RAW 22
+#define FXP_FRAC_IMU_CREST_L2G 14
+
+#define FXP_FRAC_AUDIO_FFT_RE_IM 20
+#define FXP_FRAC_AUDIO_FFT_FREQUENCIES 20
+#define FXP_FRAC_AUDIO_FFT_CENTROID 21
+#define FXP_FRAC_AUDIO_FFT_SPREAD 5
+#define FXP_FRAC_AUDIO_FFT_KURTOSIS 15
+
+#define FXP_FRAC_AUDIO_PSD_PROXY 11
+#define FXP_FRAC_AUDIO_PSD_INTEGRAL 8
+#define FXP_FRAC_AUDIO_PSD_FLATNESS 16
+#define FXP_FRAC_AUDIO_PSD_BANDPOWER 16
 
 /* -------------------------------------------------------------------------- */
 /*  Q-format type aliases                                                     */
@@ -12,7 +36,6 @@
 /* 16-bit aliases */
 typedef int16_t  q11_5_t;
 typedef int16_t  q5_11_t;
-typedef uint16_t uq13_3_t;
 typedef uint16_t uq7_9_t;
 typedef uint16_t uq5_11_t;
 typedef uint16_t uq2_14_t;
@@ -25,49 +48,14 @@ typedef int32_t  q12_20_t;
 typedef int32_t  q13_19_t;
 typedef int32_t  q10_22_t;
 typedef uint32_t uq10_22_t;
-typedef uint32_t uq9_23_t;
-typedef uint32_t uq16_16_t;
 typedef uint32_t uq12_20_t;
 typedef uint32_t uq15_17_t;
 typedef uint32_t uq11_21_t;
-typedef uint32_t uq20_12_t;
 typedef uint32_t uq17_15_t;
 typedef uint32_t uq21_11_t;
-typedef uint32_t uq24_8_t;
 
 /* 64-bit aliases */
 typedef uint64_t uq20_44_t;
-typedef uint64_t uq32_32_t;
-
-/* Width checks keep aliases in sync with Q-format constants. */
-_Static_assert(sizeof(q11_5_t) * 8 == FXP_BITS_IMU_RAW, "q11_5_t width mismatch");
-_Static_assert(sizeof(uq10_6_t) * 8 == FXP_BITS_IMU_L2A, "uq10_6_t width mismatch");
-_Static_assert(sizeof(uq5_11_t) * 8 == FXP_BITS_IMU_L2G, "uq5_11_t width mismatch");
-_Static_assert(sizeof(uq13_3_t) * 8 == FXP_BITS_IMU_RMS_RAW, "uq13_3_t width mismatch");
-_Static_assert(sizeof(uq13_3_t) * 8 == FXP_BITS_IMU_RMS_L2A, "uq13_3_t width mismatch");
-_Static_assert(sizeof(uq7_9_t) * 8 == FXP_BITS_IMU_RMS_L2G, "uq7_9_t width mismatch");
-_Static_assert(sizeof(uq7_9_t) * 8 == FXP_BITS_IMU_LINE_LENGTH_RAW, "uq7_9_t width mismatch");
-_Static_assert(sizeof(q10_22_t) * 8 == FXP_BITS_IMU_KURTOSIS_RAW, "q10_22_t width mismatch");
-_Static_assert(sizeof(uq2_14_t) * 8 == FXP_BITS_IMU_CREST_L2G, "uq2_14_t width mismatch");
-_Static_assert(sizeof(uq10_22_t) * 8 == FXP_BITS_IMU_KURT_VARIANCE, "uq10_22_t width mismatch");
-_Static_assert(sizeof(uq20_44_t) * 8 == FXP_BITS_IMU_KURT_STD4, "uq20_44_t width mismatch");
-_Static_assert(sizeof(q12_20_t) * 8 == FXP_BITS_AUDIO_FFT_RE_IM, "q12_20_t width mismatch");
-_Static_assert(sizeof(uq12_20_t) * 8 == FXP_BITS_AUDIO_FFT_MAGNITUDES, "uq12_20_t width mismatch");
-_Static_assert(sizeof(uq15_17_t) * 8 == FXP_BITS_AUDIO_FFT_SUM_MAGS, "uq15_17_t width mismatch");
-_Static_assert(sizeof(uq11_21_t) * 8 == FXP_BITS_AUDIO_FFT_CENTROID, "uq11_21_t width mismatch");
-_Static_assert(sizeof(q13_19_t) * 8 == FXP_BITS_AUDIO_FFT_DEV, "q13_19_t width mismatch");
-_Static_assert(sizeof(uq11_5_t) * 8 == FXP_BITS_AUDIO_FFT_SPREAD, "uq11_5_t width mismatch");
-_Static_assert(sizeof(uq12_20_t) * 8 == FXP_BITS_AUDIO_FFT_INV_SPREAD, "uq12_20_t width mismatch");
-_Static_assert(sizeof(q5_11_t) * 8 == FXP_BITS_AUDIO_FFT_NORM_DEV, "q5_11_t width mismatch");
-_Static_assert(sizeof(uq10_22_t) * 8 == FXP_BITS_AUDIO_FFT_NORM_DEV2, "uq10_22_t width mismatch");
-_Static_assert(sizeof(uq20_12_t) * 8 == FXP_BITS_AUDIO_FFT_NORM_DEV4, "uq20_12_t width mismatch");
-_Static_assert(sizeof(uq32_32_t) * 8 == FXP_BITS_AUDIO_FFT_KURT_WEIGHT, "uq32_32_t width mismatch");
-_Static_assert(sizeof(uq17_15_t) * 8 == FXP_BITS_AUDIO_FFT_KURTOSIS, "uq17_15_t width mismatch");
-_Static_assert(sizeof(uq21_11_t) * 8 == FXP_BITS_AUDIO_PSD_PROXY, "uq21_11_t width mismatch");
-_Static_assert(sizeof(uq24_8_t) * 8 == FXP_BITS_AUDIO_PSD_INTEGRAL, "uq24_8_t width mismatch");
-_Static_assert(sizeof(uq0_16_t) * 8 == FXP_BITS_AUDIO_PSD_FLATNESS, "uq0_16_t width mismatch");
-_Static_assert(sizeof(uq0_16_t) * 8 == FXP_BITS_AUDIO_PSD_BANDPOWER, "uq0_16_t width mismatch");
-
 /* -------------------------------------------------------------------------- */
 /*  Saturating helpers                                                        */
 /* -------------------------------------------------------------------------- */
@@ -132,12 +120,6 @@ static inline int64_t fxp_round_div_i64(int64_t num, int32_t den)
     if (den <= 0) return 0;
     if (num >= 0) return (num + (den / 2)) / den;
     return -(((-num) + (den / 2)) / den);
-}
-
-static inline uint32_t fxp_round_div_u64(uint64_t num, uint32_t den)
-{
-    if (den == 0U) return 0U;
-    return (uint32_t)((num + ((uint64_t)den >> 1)) / (uint64_t)den);
 }
 
 static inline uint32_t fxp_round_div_u32(uint32_t num, uint32_t den)
@@ -267,34 +249,88 @@ static inline fxp_q16_t fxp_q16_from_s32(int32_t x, uint8_t src_frac)
     return fxp_sat_s32_from_s64(v);
 }
 
-static inline fxp_q16_t fxp_q16_from_s64(int64_t x, uint8_t src_frac)
+/* -------------------------------------------------------------------------- */
+/*  Float/fixed conversion helpers                                            */
+/* -------------------------------------------------------------------------- */
+
+static inline int32_t fxp_from_float_signed(float x, uint8_t frac_bits)
 {
-    int32_t shift = (int32_t)FXP_PIPE_FRAC - (int32_t)src_frac;
-    int64_t v = x;
-    if (shift > 0) {
-        if (shift >= 63) {
-            v = (v >= 0) ? INT64_MAX : INT64_MIN;
-        } else {
-            v <<= shift;
-        }
-    } else if (shift < 0) {
-        int32_t r = -shift;
-        if (r >= 63) {
-            v = 0;
-        } else if (v >= 0) {
-            v = (v + ((int64_t)1 << (r - 1))) >> r;
-        } else {
-            v = -(((-v) + ((int64_t)1 << (r - 1))) >> r);
-        }
-    }
-    return fxp_sat_s32_from_s64(v);
+    float scale = (float)(1ULL << frac_bits);
+    float scaled = x * scale;
+    scaled += (scaled >= 0.0f) ? 0.5f : -0.5f;
+
+    if (scaled > (float)INT32_MAX) return INT32_MAX;
+    if (scaled < (float)INT32_MIN) return INT32_MIN;
+    return (int32_t)scaled;
 }
 
-static inline uint32_t fxp_uq0_16_ratio(uint32_t num, uint32_t den)
+static inline float fxp_to_float(int64_t x, uint8_t frac_bits)
 {
-    if (den == 0U || num == 0U) return 0U;
-    uint64_t q = (((uint64_t)num) << 16) + ((uint64_t)den >> 1U);
-    q /= (uint64_t)den;
-    if (q > UINT32_MAX) q = UINT32_MAX;
-    return (uint32_t)q;
+    float scale = (float)(1ULL << frac_bits);
+    return (float)x / scale;
 }
+
+/* Compatibility macros used across the existing codebase. */
+#define FXP_FROM_FLOAT(x, f)   (fxp_from_float_signed((float)(x), (uint8_t)(f)))
+#define FXP_TO_FLOAT(x, f)     (fxp_to_float((int64_t)(x), (uint8_t)(f)))
+
+static inline q11_5_t fxp_imu_raw_from_float(float x)
+{
+    return fxp_sat_s16_from_s32(FXP_FROM_FLOAT(x, FXP_FRAC_IMU_RAW));
+}
+
+static inline int16_t fxp_audio_from_float(float x)
+{
+    return fxp_sat_s16_from_s32(FXP_FROM_FLOAT(x, FXP_FRAC_AUDIO_INPUT));
+}
+
+#define FXP_IMU_RAW_FROM_FLOAT(x) (fxp_imu_raw_from_float((float)(x)))
+#define FXP_AUDIO_FROM_FLOAT(x)   (fxp_audio_from_float((float)(x)))
+
+/* -------------------------------------------------------------------------- */
+/*  Backend scalar carriers                                                   */
+/* -------------------------------------------------------------------------- */
+
+#ifdef FXP_MODE
+
+typedef int16_t cough_audio_sample_t; /* Q14 */
+typedef q11_5_t cough_imu_sample_t;   /* Q11.5 raw IMU */
+typedef fxp_q16_t cough_feat_t;       /* Q16 cross-module feature carrier */
+
+static inline cough_audio_sample_t cough_source_audio_sample(float x)
+{
+    return FXP_AUDIO_FROM_FLOAT(x);
+}
+
+static inline cough_imu_sample_t cough_source_imu_sample(float x)
+{
+    return FXP_IMU_RAW_FROM_FLOAT(x);
+}
+
+static inline cough_feat_t cough_source_feat(float x)
+{
+    return FXP_FROM_FLOAT(x, FXP_PIPE_FRAC);
+}
+
+#else
+
+typedef float cough_audio_sample_t;
+typedef float cough_imu_sample_t;
+typedef float cough_feat_t;
+
+static inline cough_audio_sample_t cough_source_audio_sample(float x)
+{
+    return x;
+}
+
+static inline cough_imu_sample_t cough_source_imu_sample(float x)
+{
+    return x;
+}
+
+static inline cough_feat_t cough_source_feat(float x)
+{
+    return x;
+}
+
+#endif

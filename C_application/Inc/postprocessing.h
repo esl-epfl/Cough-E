@@ -3,7 +3,7 @@
 
 #include <inttypes.h>
 #include <stdlib.h>
-#include <core/cough_backend.h>
+#include <core/fxp_core.h>
 #include <helpers.h>
 
 #ifndef FXP_MODE

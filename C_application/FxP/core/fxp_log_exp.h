@@ -1,12 +1,16 @@
 #pragma once
 
 #include <inttypes.h>
+#include <limits.h>
 
-/* Precomputed LUTs for periodogram flatness kernels.
- * Generated for N=256 samples over [0,1] with Q24 scaling.
+#include <core/fxp_core.h>
+
+/* Fixed-point log/exp LUTs and helpers.
+ * Tables are generated for N=256 samples over [0,1] with Q24 scaling.
  */
 
 #define FXP_LN_LUT_SIZE 256
+#define FXP_LN2_Q24 ((int32_t)11629080)
 
 static const int32_t fxp_ln_lut_q24[FXP_LN_LUT_SIZE + 1] = {
     0,
@@ -527,3 +531,68 @@ static const uint32_t fxp_exp_lut_q24[FXP_LN_LUT_SIZE + 1] = {
     33463703U,
     33554432U
 };
+
+/* Natural logarithm on unsigned integer input, result in Q11. */
+static inline int32_t fxp_ln_u64_q11(uint64_t x)
+{
+    if (x == 0ULL) x = 1ULL;
+
+    uint32_t msb = 63U - (uint32_t)__builtin_clzll(x);
+    uint64_t base = 1ULL << msb;
+    uint64_t diff = x - base;
+
+    uint32_t frac_q24;
+    if (msb <= 24U) {
+        frac_q24 = (uint32_t)(diff << (24U - msb));
+    } else {
+        uint32_t shift = msb - 24U;
+        frac_q24 = (uint32_t)((diff + (1ULL << (shift - 1U))) >> shift);
+    }
+    if (frac_q24 >= (1U << 24)) {
+        frac_q24 = (1U << 24) - 1U;
+    }
+
+    uint32_t idx = frac_q24 >> 16;
+    uint32_t alpha = frac_q24 & 0xFFFFU;
+
+    int32_t y0 = fxp_ln_lut_q24[idx];
+    int32_t y1 = fxp_ln_lut_q24[idx + 1];
+    int32_t y = y0 + (int32_t)((((int64_t)(y1 - y0) * (int64_t)alpha) + (1LL << 15)) >> 16);
+
+    int64_t ln_x_q24 = (int64_t)msb * (int64_t)FXP_LN2_Q24 + (int64_t)y;
+    return (int32_t)((ln_x_q24 + (1LL << 12)) >> 13);
+}
+
+/* Natural exponential on Q11 input, result in UQ0.16. */
+static inline uint16_t fxp_exp_uq0_16_from_q11(int16_t x_q11)
+{
+    int64_t x_q24 = (int64_t)x_q11 * (int64_t)(1U << 13);
+    int32_t k = fxp_floor_div_s64(x_q24, FXP_LN2_Q24);
+    int64_t rem_q24 = x_q24 - (int64_t)k * (int64_t)FXP_LN2_Q24;
+    if (rem_q24 < 0) rem_q24 = 0;
+
+    uint32_t z_q24 = (uint32_t)(((uint64_t)rem_q24 << 24) / (uint32_t)FXP_LN2_Q24);
+    if (z_q24 >= (1U << 24)) {
+        z_q24 = (1U << 24) - 1U;
+    }
+
+    uint32_t idx = z_q24 >> 16;
+    uint32_t alpha = z_q24 & 0xFFFFU;
+
+    uint32_t y0 = fxp_exp_lut_q24[idx];
+    uint32_t y1 = fxp_exp_lut_q24[idx + 1];
+    uint32_t er_q24 = y0 + (uint32_t)((((int64_t)((int32_t)y1 - (int32_t)y0) * (int64_t)alpha) + (1LL << 15)) >> 16);
+    uint32_t er_q16 = (er_q24 + (1U << 7)) >> 8;
+
+    uint64_t out_q16;
+    if (k >= 0) {
+        if (k >= 16) return UINT16_MAX;
+        out_q16 = ((uint64_t)er_q16) << (uint32_t)k;
+    } else {
+        uint32_t shift = (uint32_t)(-k);
+        if (shift >= 32) out_q16 = 0;
+        else out_q16 = (((uint64_t)er_q16) + ((uint64_t)1U << (shift - 1U))) >> shift;
+    }
+
+    return fxp_sat_u16_from_u32(fxp_sat_u32_from_u64(out_q16));
+}

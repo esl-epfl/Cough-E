@@ -17,7 +17,7 @@
 #include <audio_features.h>
 #include <audio_model.h>
 #include <azc.h>
-#include <core/fxp_convert.h>
+#include <core/fxp_core.h>
 #define audio_features fxp_audio_features
 #define imu_features fxp_imu_features
 #include <feature_extraction.h>

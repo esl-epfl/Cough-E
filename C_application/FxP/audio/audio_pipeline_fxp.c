@@ -8,11 +8,8 @@
 #include <mfcc_module.h>
 #include <welch_psd.h>
 
-#include <audio/audio_periodogram_lut.h>
-#include <audio/hann_window_q15.h>
-#include <audio/mel_basis_q15.h>
-#include <audio/mfcc_hann_wind_q15.h>
-#include <core/fxp_log.h>
+#include <audio/audio_tables_q15.h>
+#include <core/fxp_log_exp.h>
 
 #if defined(FXP_MODE) && defined(FIXED_POINT)
 
@@ -144,7 +141,7 @@ static void _write_fft_features(const int8_t *features_selector,
     int need_spread = features_selector[SPECTRAL_SPREAD]
                    || features_selector[SPECTRAL_KURTOSIS];
     int need_kurt = features_selector[SPECTRAL_KURTOSIS];
-
+// TO CHANGE i dont want everything to be simplified to Q16 
     if (need_rolloff) {
         uq12_20_t rolloff_q20 = _rolloff(view);
         feats_q16[SPECTRAL_ROLLOFF] = fxp_q16_from_u32(rolloff_q20, FXP_FRAC_AUDIO_FFT_FREQUENCIES);
@@ -252,7 +249,6 @@ void audio_fft_features(const int8_t *features_selector,
 /*  Periodogram kernels + block                                               */
 /* -------------------------------------------------------------------------- */
 
-#define FXP_PSD_LN2_Q24 ((int32_t)11629080)
 #define FXP_PSD_PROXY_TO_INT_SHIFT (FXP_FRAC_AUDIO_PSD_PROXY - FXP_FRAC_AUDIO_PSD_INTEGRAL)
 #define FXP_HANN_FRAC_BITS 15
 
@@ -281,40 +277,10 @@ static q5_11_t _psd_ln_proxy_q11(uq21_11_t x_q11)
     int32_t y = y0 + (int32_t)((((int64_t)(y1 - y0) * (int64_t)alpha) + (1LL << 15)) >> 16);
 
     int32_t exp2 = (int32_t)msb - FXP_FRAC_AUDIO_PSD_PROXY;
-    int64_t ln_x_q24 = (int64_t)exp2 * (int64_t)FXP_PSD_LN2_Q24 + (int64_t)y;
+    int64_t ln_x_q24 = (int64_t)exp2 * (int64_t)FXP_LN2_Q24 + (int64_t)y;
     int64_t ln_x_q11 = (ln_x_q24 >= 0) ? ((ln_x_q24 + (1LL << 12)) >> 13) : -(((-ln_x_q24) + (1LL << 12)) >> 13);
 
     return fxp_sat_s16_from_s32((int32_t)ln_x_q11);
-}
-
-static uq0_16_t _psd_exp_q16_from_q11(q5_11_t x_q11)
-{
-    int64_t x_q24 = (int64_t)x_q11 * (int64_t)(1U << 13);
-    int32_t k = fxp_floor_div_s64(x_q24, FXP_PSD_LN2_Q24);
-    int64_t rem_q24 = x_q24 - (int64_t)k * (int64_t)FXP_PSD_LN2_Q24;
-    if (rem_q24 < 0) rem_q24 = 0;
-
-    uint32_t z_q24 = (uint32_t)(((uint64_t)rem_q24 << 24) / (uint32_t)FXP_PSD_LN2_Q24);
-    uint32_t idx = z_q24 >> 16;
-    if (idx >= FXP_LN_LUT_SIZE) idx = FXP_LN_LUT_SIZE - 1;
-    uint32_t alpha = z_q24 & 0xFFFFU;
-
-    uint32_t y0 = fxp_exp_lut_q24[idx];
-    uint32_t y1 = fxp_exp_lut_q24[idx + 1];
-    uint32_t er_q24 = y0 + (uint32_t)((((int64_t)((int32_t)y1 - (int32_t)y0) * (int64_t)alpha) + (1LL << 15)) >> 16);
-    uint32_t er_q16 = (er_q24 + (1U << 7)) >> 8;
-
-    uint64_t out_q16;
-    if (k >= 0) {
-        if (k >= 16) return UINT16_MAX;
-        out_q16 = ((uint64_t)er_q16) << (uint32_t)k;
-    } else {
-        uint32_t shift = (uint32_t)(-k);
-        if (shift >= 32) out_q16 = 0;
-        else out_q16 = (((uint64_t)er_q16) + ((uint64_t)1U << (shift - 1U))) >> shift;
-    }
-
-    return fxp_sat_u16_from_u32(fxp_sat_u32_from_u64(out_q16));
 }
 
 static uint32_t _psd_simpson_step_q8(const uq21_11_t *x_q11, int16_t start, int16_t end)
@@ -396,7 +362,7 @@ static uq0_16_t _flatness(const audio_psd_view_t *view)
     q5_11_t log_mean_q11 = _psd_ln_proxy_q11(mean_proxy_q11);
     int32_t diff_q11 = mean_log_q11 - (int32_t)log_mean_q11;
     if (diff_q11 > 0) diff_q11 = 0;
-    return _psd_exp_q16_from_q11((q5_11_t)diff_q11);
+    return fxp_exp_uq0_16_from_q11((q5_11_t)diff_q11);
 }
 
 static void _bandpowers(const audio_psd_view_t *view,
