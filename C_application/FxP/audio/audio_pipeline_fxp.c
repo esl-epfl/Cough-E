@@ -572,20 +572,22 @@ void audio_psd_features(const int8_t *features_selector,
 
 #define FXP_MEL_WIN_FRAC 15
 #define FXP_MEL_BASIS_FRAC 15
-#define FXP_MEL_STATS_FRAC 11
-#define FXP_MEL_OUTPUT_STATS_FRAC 9
-#define FXP_MEL_OUTPUT_ENTROPY_FRAC 14
-#define FXP_MEL_PROB_FRAC 24
+#define FXP_MEL_POWER_FRAC 28
+#define FXP_MEL_ACC_FRAC 36
+#define FXP_MEL_ACC_SHIFT ((FXP_MEL_POWER_FRAC + FXP_MEL_BASIS_FRAC) - FXP_MEL_ACC_FRAC)
+#define FXP_MEL_ACC_EXTRA_FRAC (FXP_MEL_ACC_FRAC - FXP_MEL_POWER_FRAC)
+#define FXP_MEL_STATS_FRAC 9
+#define FXP_MEL_ENTROPY_FRAC 14
+#define FXP_MEL_PROB_FRAC 16
+#define FXP_MEL_ENTROPY_PROD_SHIFT ((FXP_MEL_PROB_FRAC + FXP_MEL_STATS_FRAC) - FXP_MEL_ENTROPY_FRAC)
 
 #define FXP_MEL_DB_PER_LN_Q20 ((int32_t)4553913)
 #define FXP_MEL_20DB_PER_LN_Q20 ((int32_t)9107826)
 #define FXP_MEL_LN2_Q24 ((int32_t)11629080)
-#define FXP_MEL_LN2_Q11 ((int32_t)((FXP_MEL_LN2_Q24 + (1 << 12)) >> 13))
-#define FXP_MEL_LN_Q11_SCALE_P ((int32_t)(FXP_MEL_PROB_FRAC * FXP_MEL_LN2_Q11))
-#define FXP_MEL_TOP_DB_Q11 ((int32_t)163840)
-#define FXP_MEL_DB_PER_SHIFT_Q11 ((int32_t)6165)
-#define FXP_MEL_POWER_MSB_TARGET 46U
-#define FXP_MEL_ENT_ALIGN_FRAC 8U
+#define FXP_MEL_LN2_Q9 ((int32_t)((FXP_MEL_LN2_Q24 + (1 << 14)) >> 15))
+#define FXP_MEL_LN_Q9_SCALE_P ((int32_t)(FXP_MEL_PROB_FRAC * FXP_MEL_LN2_Q9))
+#define FXP_MEL_TOP_DB_Q9 ((int32_t)40960)
+#define FXP_MEL_DB_PER_POWER_BIT_Q9 ((int32_t)1542)
 
 #if (FIXED_POINT == 32)
 #define FXP_MEL_INPUT_FRAC 31
@@ -638,14 +640,6 @@ static inline uint32_t _mel_uq_div_u64_q(uint64_t num, uint64_t den, uint8_t fra
     return (uint32_t)q;
 }
 
-static inline uint32_t _mel_pick_power_shift(uint64_t max_power)
-{
-    if (max_power == 0ULL) return 0U;
-    uint32_t msb = 63U - (uint32_t)__builtin_clzll(max_power);
-    if (msb <= FXP_MEL_POWER_MSB_TARGET) return 0U;
-    return msb - FXP_MEL_POWER_MSB_TARGET;
-}
-
 static inline uint8_t _mel_ceil_log2_u16(uint16_t v)
 {
     if (v <= 1U) return 0U;
@@ -656,19 +650,6 @@ static inline uint8_t _mel_ceil_log2_u16(uint16_t v)
         bits++;
     }
     return bits;
-}
-
-static inline uint64_t _mel_entropy_align_term(uint64_t value, uint8_t frame_shift, uint8_t max_frame_shift)
-{
-    if (value == 0ULL) return 0ULL;
-    uint8_t dshift = (uint8_t)(max_frame_shift - frame_shift);
-    if (dshift <= FXP_MEL_ENT_ALIGN_FRAC) {
-        uint32_t lshift = (uint32_t)(FXP_MEL_ENT_ALIGN_FRAC - dshift);
-        if (lshift >= 64U) return 0ULL;
-        if (value > (UINT64_MAX >> lshift)) return UINT64_MAX;
-        return value << lshift;
-    }
-    return fxp_round_shift_u64(value, (uint32_t)(dshift - FXP_MEL_ENT_ALIGN_FRAC));
 }
 
 static inline fxp_mel_sig_t _mel_from_input_q14(int16_t x_q14)
@@ -713,51 +694,32 @@ static void _mel_ensure_kiss_ref(void)
     free(y);
 }
 
-static int32_t _mel_db_from_power_q11(uint64_t p_scaled, int32_t db_offset_q11)
+static int16_t _mel_db_from_power_q9(uint64_t p_scaled, int32_t db_offset_q9)
 {
-    int32_t ln_q11 = fxp_ln_u64_q11((p_scaled == 0ULL) ? 1ULL : p_scaled);
-    int32_t db_q11 = (int32_t)((((int64_t)ln_q11 * (int64_t)FXP_MEL_DB_PER_LN_Q20) + (1LL << 19)) >> 20);
-    return db_q11 + db_offset_q11;
+    int16_t ln_q9 = fxp_ln_u64_q9((p_scaled == 0ULL) ? 1ULL : p_scaled);
+    int32_t db_q9 = (int32_t)((((int64_t)ln_q9 * (int64_t)FXP_MEL_DB_PER_LN_Q20) + (1LL << 19)) >> 20);
+    return fxp_sat_s16_from_s32(db_q9 + db_offset_q9);
 }
 
-static inline int32_t _mel_q11_to_q9(int32_t x_q11)
-{
-    if (x_q11 >= 0) {
-        return (x_q11 + (1 << 1)) >> 2;
-    }
-    return -(((-x_q11) + (1 << 1)) >> 2);
-}
-
-static inline int32_t _mel_q11_to_q14(int32_t x_q11)
-{
-    return fxp_sat_s32_from_s64((int64_t)x_q11 << 3);
-}
-
-static int32_t _mel_entropy_row_q11(const uint64_t *row_power,
-                                    const uint8_t *frame_shift,
+static uint16_t _mel_entropy_row_q14(const uint64_t *row_power,
                                     int16_t n_frames)
 {
-    if (!row_power || !frame_shift || n_frames <= 0) return 0;
+    if (!row_power || n_frames <= 0) return 0;
 
     uint64_t row_max = 0ULL;
-    uint8_t row_max_shift = 0U;
     for (int16_t t = 0; t < n_frames; t++) {
         if (row_power[t] > row_max) row_max = row_power[t];
-        if (row_power[t] > 0ULL && frame_shift[t] > row_max_shift) {
-            row_max_shift = frame_shift[t];
-        }
     }
     if (row_max == 0ULL) return 0;
 
     uint32_t row_msb = 63U - (uint32_t)__builtin_clzll(row_max);
     uint8_t sum_bits = _mel_ceil_log2_u16((uint16_t)n_frames);
-    int32_t pre_shift_i = (int32_t)row_msb + (int32_t)FXP_MEL_ENT_ALIGN_FRAC + (int32_t)sum_bits - 62;
+    int32_t pre_shift_i = (int32_t)row_msb + (int32_t)sum_bits - 62;
     uint32_t pre_shift = (pre_shift_i > 0) ? (uint32_t)pre_shift_i : 0U;
 
     uint64_t row_sum = 0ULL;
     for (int16_t t = 0; t < n_frames; t++) {
-        uint64_t v = fxp_round_shift_u64(row_power[t], pre_shift);
-        uint64_t term = _mel_entropy_align_term(v, frame_shift[t], row_max_shift);
+        uint64_t term = fxp_round_shift_u64(row_power[t], pre_shift);
         if (term == 0ULL) continue;
         if (UINT64_MAX - row_sum < term) {
             row_sum = UINT64_MAX;
@@ -767,23 +729,24 @@ static int32_t _mel_entropy_row_q11(const uint64_t *row_power,
     }
     if (row_sum == 0ULL) return 0;
 
-    int64_t entropy_q11 = 0;
+    int64_t entropy_q14 = 0;
     for (int16_t t = 0; t < n_frames; t++) {
-        uint64_t v = fxp_round_shift_u64(row_power[t], pre_shift);
-        uint64_t term = _mel_entropy_align_term(v, frame_shift[t], row_max_shift);
+        uint64_t term = fxp_round_shift_u64(row_power[t], pre_shift);
         if (term == 0ULL) continue;
 
-        uint32_t p_qp = _mel_uq_div_u64_q(term, row_sum, FXP_MEL_PROB_FRAC);
-        if (p_qp == 0U) continue;
+        uint16_t p_q16 = fxp_sat_u16_from_u32(_mel_uq_div_u64_q(term, row_sum, FXP_MEL_PROB_FRAC));
+        if (p_q16 == 0U) continue;
 
-        int32_t ln_p_q11 = fxp_ln_u64_q11((uint64_t)p_qp) - FXP_MEL_LN_Q11_SCALE_P;
-        if (ln_p_q11 > 0) ln_p_q11 = 0;
+        int32_t ln_p_q9 = (int32_t)fxp_ln_u64_q9((uint64_t)p_q16) - FXP_MEL_LN_Q9_SCALE_P;
+        if (ln_p_q9 > 0) ln_p_q9 = 0;
 
-        int64_t contrib_q11 = -((((int64_t)p_qp * (int64_t)ln_p_q11) + (1LL << (FXP_MEL_PROB_FRAC - 1))) >> FXP_MEL_PROB_FRAC);
-        entropy_q11 += contrib_q11;
+        int64_t prod_q25 = (int64_t)p_q16 * (int64_t)(-ln_p_q9);
+        entropy_q14 += (prod_q25 + (1LL << (FXP_MEL_ENTROPY_PROD_SHIFT - 1))) >> FXP_MEL_ENTROPY_PROD_SHIFT;
     }
 
-    return fxp_sat_s32_from_s64(entropy_q11);
+    if (entropy_q14 <= 0) return 0U;
+    if (entropy_q14 > UINT16_MAX) return UINT16_MAX;
+    return (uint16_t)entropy_q14;
 }
 
 void audio_mel_features(const int8_t *features_selector,
@@ -818,27 +781,27 @@ void audio_mel_features(const int8_t *features_selector,
     kiss_fft_cpx *cx_out = (kiss_fft_cpx *)malloc((size_t)FFT_RES_LEN * sizeof(kiss_fft_cpx));
     uint64_t *frame_power = (uint64_t *)malloc((size_t)FFT_RES_LEN * sizeof(uint64_t));
     uint64_t *mel_power = (uint64_t *)malloc((size_t)n_mels_needed * (size_t)n_frames * sizeof(uint64_t));
-    int32_t *mel_db_q11 = (int32_t *)malloc((size_t)n_mels_needed * (size_t)n_frames * sizeof(int32_t));
-    uint8_t *frame_shift = (uint8_t *)malloc((size_t)n_frames * sizeof(uint8_t));
+    int16_t *mel_db_q9 = (int16_t *)malloc((size_t)n_mels_needed * (size_t)n_frames * sizeof(int16_t));
     kiss_fftr_cfg cfg = kiss_fftr_alloc(N_FFT, 0, 0, 0);
 
-    if (!sig_q || !padded_q || !timedata || !cx_out || !frame_power || !mel_power || !mel_db_q11 || !frame_shift || !cfg) {
+    if (!sig_q || !padded_q || !timedata || !cx_out || !frame_power || !mel_power || !mel_db_q9 || !cfg) {
         free(sig_q);
         free(padded_q);
         free(timedata);
         free(cx_out);
         free(frame_power);
         free(mel_power);
-        free(mel_db_q11);
-        free(frame_shift);
+        free(mel_db_q9);
         free(cfg);
         return;
     }
 
     _mel_ensure_kiss_ref();
 
-    int32_t ln_ref_q11 = fxp_ln_u64_q11((uint64_t)_kiss_ref_abs);
-    int32_t db_offset_base_q11 = -((int32_t)((((int64_t)ln_ref_q11 * (int64_t)FXP_MEL_20DB_PER_LN_Q20) + (1LL << 19)) >> 20));
+    int32_t ln_ref_q9 = fxp_ln_u64_q9((uint64_t)_kiss_ref_abs);
+    int32_t db_offset_base_q9 =
+        -((int32_t)((((int64_t)ln_ref_q9 * (int64_t)FXP_MEL_20DB_PER_LN_Q20) + (1LL << 19)) >> 20))
+        - ((int32_t)FXP_MEL_ACC_EXTRA_FRAC * FXP_MEL_DB_PER_POWER_BIT_Q9);
 
     for (int16_t i = 0; i < len; i++) {
         sig_q[i] = _mel_from_input_q14(sig_q14[i]);
@@ -852,7 +815,7 @@ void audio_mel_features(const int8_t *features_selector,
         padded_q[PAD_LEN + i] = sig_q[i];
     }
 
-    int32_t max_db_q11 = INT32_MIN;
+    int16_t max_db_q9 = INT16_MIN;
     for (int16_t f = 0; f < n_frames; f++) {
         int32_t frame_start = (int32_t)f * HOP_LEN;
 
@@ -875,20 +838,11 @@ void audio_mel_features(const int8_t *features_selector,
 
         kiss_fftr(cfg, timedata, cx_out);
 
-        uint64_t max_power = 0ULL;
         for (int16_t k = 0; k < FFT_RES_LEN; k++) {
             int64_t re = (int64_t)cx_out[k].r;
             int64_t im = (int64_t)cx_out[k].i;
             uint64_t p = (uint64_t)(re * re) + (uint64_t)(im * im);
             frame_power[k] = p;
-            if (p > max_power) max_power = p;
-        }
-        uint8_t cur_shift = (uint8_t)_mel_pick_power_shift(max_power);
-        frame_shift[f] = cur_shift;
-        int32_t frame_db_offset_q11 = db_offset_base_q11 + (int32_t)cur_shift * FXP_MEL_DB_PER_SHIFT_Q11;
-
-        for (int16_t k = 0; k < FFT_RES_LEN; k++) {
-            frame_power[k] = fxp_round_shift_u64(frame_power[k], cur_shift);
         }
 
         for (int16_t m = 0; m < n_mels_needed; m++) {
@@ -899,7 +853,8 @@ void audio_mel_features(const int8_t *features_selector,
             uint64_t sum = 0ULL;
             for (int16_t k = start; k <= end; k++) {
                 uint16_t w_q15 = fxp_mel_basis_q15[mel_idx][k - start];
-                uint64_t term = ((frame_power[k] * (uint64_t)w_q15) + (1ULL << (FXP_MEL_BASIS_FRAC - 1))) >> FXP_MEL_BASIS_FRAC;
+                uint64_t term = fxp_round_shift_u64(frame_power[k] * (uint64_t)w_q15,
+                                                    FXP_MEL_ACC_SHIFT);
                 if (UINT64_MAX - sum < term) {
                     sum = UINT64_MAX;
                 } else {
@@ -908,52 +863,51 @@ void audio_mel_features(const int8_t *features_selector,
             }
 
             mel_power[(size_t)m * (size_t)n_frames + (size_t)f] = sum;
-            mel_db_q11[(size_t)m * (size_t)n_frames + (size_t)f] = _mel_db_from_power_q11(sum, frame_db_offset_q11);
-            if (mel_db_q11[(size_t)m * (size_t)n_frames + (size_t)f] > max_db_q11) {
-                max_db_q11 = mel_db_q11[(size_t)m * (size_t)n_frames + (size_t)f];
+            mel_db_q9[(size_t)m * (size_t)n_frames + (size_t)f] = _mel_db_from_power_q9(sum, db_offset_base_q9);
+            if (mel_db_q9[(size_t)m * (size_t)n_frames + (size_t)f] > max_db_q9) {
+                max_db_q9 = mel_db_q9[(size_t)m * (size_t)n_frames + (size_t)f];
             }
         }
     }
 
-    int32_t clip_floor_q11 = max_db_q11 - FXP_MEL_TOP_DB_Q11;
+    int16_t clip_floor_q9 = fxp_sat_s16_from_s32((int32_t)max_db_q9 - FXP_MEL_TOP_DB_Q9);
 
     for (int16_t m = 0; m < n_mels_needed; m++) {
-        int64_t sum_db_q11 = 0;
-        int32_t row_max_q11 = INT32_MIN;
+        int32_t sum_db_q9 = 0;
+        int16_t row_max_q9 = INT16_MIN;
 
         for (int16_t f = 0; f < n_frames; f++) {
             size_t idx = (size_t)m * (size_t)n_frames + (size_t)f;
-            int32_t v = mel_db_q11[idx];
-            if (v < clip_floor_q11) v = clip_floor_q11;
-            mel_db_q11[idx] = v;
-            sum_db_q11 += (int64_t)v;
-            if (v > row_max_q11) row_max_q11 = v;
+            int16_t v = mel_db_q9[idx];
+            if (v < clip_floor_q9) v = clip_floor_q9;
+            mel_db_q9[idx] = v;
+            sum_db_q9 += (int32_t)v;
+            if (v > row_max_q9) row_max_q9 = v;
         }
 
-        int32_t mean_q11 = fxp_round_div_s64(sum_db_q11, n_frames);
+        int16_t mean_q9 = fxp_sat_s16_from_s32(fxp_round_div_s32(sum_db_q9, n_frames));
 
-        int64_t sum_sq_q22 = 0;
+        int64_t sum_sq_q18 = 0;
         for (int16_t f = 0; f < n_frames; f++) {
-            int32_t d = mel_db_q11[(size_t)m * (size_t)n_frames + (size_t)f] - mean_q11;
-            sum_sq_q22 += (int64_t)d * (int64_t)d;
+            int32_t d = (int32_t)mel_db_q9[(size_t)m * (size_t)n_frames + (size_t)f] - (int32_t)mean_q9;
+            sum_sq_q18 += (int64_t)d * (int64_t)d;
         }
-        int64_t var_q22 = fxp_round_div_i64(sum_sq_q22, n_frames);
-        if (var_q22 < 0) var_q22 = 0;
-        int32_t std_q11 = fxp_sat_s32_from_s64((int64_t)fxp_sqrt64((uint64_t)var_q22));
+        int64_t var_q18 = fxp_round_div_i64(sum_sq_q18, n_frames);
+        if (var_q18 < 0) var_q18 = 0;
+        int16_t std_q9 = fxp_sat_s16_from_s32((int32_t)fxp_sqrt64((uint64_t)var_q18));
 
-        int32_t ent_q11 = _mel_entropy_row_q11(&mel_power[(size_t)m * (size_t)n_frames],
-                                               frame_shift,
-                                               n_frames);
+        uint16_t ent_q14 = _mel_entropy_row_q14(&mel_power[(size_t)m * (size_t)n_frames],
+                                                n_frames);
 
         int16_t mel_bin = idxs_needed[m];
         feats[MEL_FREQUENCY_CEPSTRAL_COEFFICIENT + mel_bin] =
-            (fxp_feat_t)_mel_q11_to_q9(mean_q11);
+            (fxp_feat_t)mean_q9;
         feats[MEL_FREQUENCY_CEPSTRAL_COEFFICIENT + N_MFCC + mel_bin] =
-            (fxp_feat_t)_mel_q11_to_q9(std_q11);
+            (fxp_feat_t)std_q9;
         feats[MEL_FREQUENCY_CEPSTRAL_COEFFICIENT + (2 * N_MFCC) + mel_bin] =
-            (fxp_feat_t)_mel_q11_to_q9(row_max_q11);
+            (fxp_feat_t)row_max_q9;
         feats[MEL_FREQUENCY_CEPSTRAL_COEFFICIENT + (3 * N_MFCC) + mel_bin] =
-            (fxp_feat_t)_mel_q11_to_q14(ent_q11);
+            (fxp_feat_t)ent_q14;
     }
 
     free(sig_q);
@@ -962,8 +916,7 @@ void audio_mel_features(const int8_t *features_selector,
     free(cx_out);
     free(frame_power);
     free(mel_power);
-    free(mel_db_q11);
-    free(frame_shift);
+    free(mel_db_q9);
     free(cfg);
 }
 

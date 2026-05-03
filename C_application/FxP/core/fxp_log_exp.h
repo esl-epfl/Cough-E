@@ -532,8 +532,8 @@ static const uint32_t fxp_exp_lut_q24[FXP_LN_LUT_SIZE + 1] = {
     33554432U
 };
 
-/* Natural logarithm on unsigned integer input, result in Q11. */
-static inline int32_t fxp_ln_u64_q11(uint64_t x)
+/* Natural logarithm on unsigned integer input, result in Q7.9. */
+static inline int16_t fxp_ln_u64_q9(uint64_t x)
 {
     if (x == 0ULL) x = 1ULL;
 
@@ -560,7 +560,7 @@ static inline int32_t fxp_ln_u64_q11(uint64_t x)
     int32_t y = y0 + (int32_t)((((int64_t)(y1 - y0) * (int64_t)alpha) + (1LL << 15)) >> 16);
 
     int64_t ln_x_q24 = (int64_t)msb * (int64_t)FXP_LN2_Q24 + (int64_t)y;
-    return (int32_t)((ln_x_q24 + (1LL << 12)) >> 13);
+    return fxp_sat_s16_from_s32((int32_t)((ln_x_q24 + (1LL << 14)) >> 15));
 }
 
 /* Natural exponential on Q11 input, result in UQ0.16. */
