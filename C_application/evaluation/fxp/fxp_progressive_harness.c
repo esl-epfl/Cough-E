@@ -85,19 +85,19 @@ extern void audio_fft_features(const int8_t *features_selector,
                                const int16_t *sig_q14,
                                int16_t len,
                                int16_t fs,
-                               fxp_q16_t *feats_q16);
+                               fxp_feat_t *feats);
 extern void audio_psd_features(const int8_t *features_selector,
                                const int16_t *sig_q14,
                                int16_t sig_len,
                                int16_t fs,
-                               fxp_q16_t *feats_q16);
+                               fxp_feat_t *feats);
 extern void audio_mel_features(const int8_t *features_selector,
                                const int16_t *sig_q14,
                                int16_t len,
-                               fxp_q16_t *feats_q16);
-extern void imu_run_features_q16(const int8_t *features_selector,
-                                 prog_imu_sig_view_t sig,
-                                 fxp_q16_t *feats_q16);
+                               fxp_feat_t *feats);
+extern void imu_run_features_native(const int8_t *features_selector,
+                                    prog_imu_sig_view_t sig,
+                                    fxp_feat_t *feats);
 extern uq10_6_t imu_l2_norm_accel_from_raw(q11_5_t ax, q11_5_t ay, q11_5_t az);
 extern uq5_11_t imu_l2_norm_gyro_from_raw(q11_5_t gx, q11_5_t gy, q11_5_t gz);
 
@@ -163,17 +163,33 @@ static int any_required(const int8_t *selector, uint16_t start, uint16_t end)
     return 0;
 }
 
-static void copy_feature_range(float *dst, const fxp_q16_t *src, uint16_t start, uint16_t end)
+static float audio_feat_to_float(fxp_feat_t value, uint16_t feature_idx)
+{
+    if (audio_feature_is_signed(feature_idx)) {
+        return FXP_TO_FLOAT((int32_t)value, audio_feature_frac_bits(feature_idx));
+    }
+    return FXP_TO_FLOAT(value, audio_feature_frac_bits(feature_idx));
+}
+
+static float imu_feat_to_float(fxp_feat_t value, uint16_t feature_idx)
+{
+    if (imu_feature_is_signed(feature_idx)) {
+        return FXP_TO_FLOAT((int32_t)value, imu_feature_frac_bits(feature_idx));
+    }
+    return FXP_TO_FLOAT(value, imu_feature_frac_bits(feature_idx));
+}
+
+static void copy_audio_feature_range(float *dst, const fxp_feat_t *src, uint16_t start, uint16_t end)
 {
     for (uint16_t i = start; i <= end; i++) {
-        dst[i] = FXP_TO_FLOAT(src[i], FXP_PIPE_FRAC);
+        dst[i] = audio_feat_to_float(src[i], i);
     }
 }
 
 static void audio_crest_q16(const int8_t *selector,
                             const int16_t *sig_q14,
                             int16_t len,
-                            fxp_q16_t *feats_q16)
+                            fxp_feat_t *feats)
 {
     if (!selector[CREST_FACTOR] || len <= 0) return;
 
@@ -193,8 +209,8 @@ static void audio_crest_q16(const int8_t *selector,
 
     uint64_t mean_sq_q28 = (sum_sq_q28 + ((uint64_t)len >> 1U)) / (uint64_t)len;
     int32_t rms_q14 = (int32_t)fxp_sat_u32_from_u64(fxp_sqrt64(mean_sq_q28));
-    feats_q16[CREST_FACTOR] = (rms_q14 > 0)
-        ? fxp_div_s32(max_v, rms_q14, FXP_PIPE_FRAC)
+    feats[CREST_FACTOR] = (rms_q14 > 0)
+        ? (fxp_feat_t)fxp_div_s32(max_v, rms_q14, FXP_PIPE_FRAC)
         : 0;
 }
 
@@ -207,7 +223,7 @@ static void apply_audio_block(progressive_block_t block,
     if (!block_is_audio(block)) return;
 
     int16_t *sig_q14 = (int16_t *)malloc((size_t)len * sizeof(int16_t));
-    fxp_q16_t *fxp_feats = (fxp_q16_t *)calloc((size_t)Number_AUDIO_Features, sizeof(fxp_q16_t));
+    fxp_feat_t *fxp_feats = (fxp_feat_t *)calloc((size_t)Number_AUDIO_Features, sizeof(fxp_feat_t));
     if (!sig_q14 || !fxp_feats) {
         free(sig_q14);
         free(fxp_feats);
@@ -218,37 +234,37 @@ static void apply_audio_block(progressive_block_t block,
 
     if (block == BLOCK_AUDIO_FFT || block == BLOCK_AUDIO_ALL) {
         audio_fft_features(audio_features_selector, sig_q14, len, fs, fxp_feats);
-        if (audio_features_selector[SPECTRAL_ROLLOFF]) features[SPECTRAL_ROLLOFF] = FXP_TO_FLOAT(fxp_feats[SPECTRAL_ROLLOFF], FXP_PIPE_FRAC);
-        if (audio_features_selector[SPECTRAL_SPREAD]) features[SPECTRAL_SPREAD] = FXP_TO_FLOAT(fxp_feats[SPECTRAL_SPREAD], FXP_PIPE_FRAC);
-        if (audio_features_selector[SPECTRAL_KURTOSIS]) features[SPECTRAL_KURTOSIS] = FXP_TO_FLOAT(fxp_feats[SPECTRAL_KURTOSIS], FXP_PIPE_FRAC);
+        if (audio_features_selector[SPECTRAL_ROLLOFF]) features[SPECTRAL_ROLLOFF] = audio_feat_to_float(fxp_feats[SPECTRAL_ROLLOFF], SPECTRAL_ROLLOFF);
+        if (audio_features_selector[SPECTRAL_SPREAD]) features[SPECTRAL_SPREAD] = audio_feat_to_float(fxp_feats[SPECTRAL_SPREAD], SPECTRAL_SPREAD);
+        if (audio_features_selector[SPECTRAL_KURTOSIS]) features[SPECTRAL_KURTOSIS] = audio_feat_to_float(fxp_feats[SPECTRAL_KURTOSIS], SPECTRAL_KURTOSIS);
     }
 
     if (block == BLOCK_AUDIO_PSD || block == BLOCK_AUDIO_ALL) {
         audio_psd_features(audio_features_selector, sig_q14, len, fs, fxp_feats);
-        if (audio_features_selector[SPECTRAL_FLATNESS]) features[SPECTRAL_FLATNESS] = FXP_TO_FLOAT(fxp_feats[SPECTRAL_FLATNESS], FXP_PIPE_FRAC);
-        if (audio_features_selector[DOMINANT_FREQUENCY]) features[DOMINANT_FREQUENCY] = FXP_TO_FLOAT(fxp_feats[DOMINANT_FREQUENCY], FXP_PIPE_FRAC);
-        copy_feature_range(features, fxp_feats, POWER_SPECTRAL_DENSITY, POWER_SPECTRAL_DENSITY + N_PSD - 1);
+        if (audio_features_selector[SPECTRAL_FLATNESS]) features[SPECTRAL_FLATNESS] = audio_feat_to_float(fxp_feats[SPECTRAL_FLATNESS], SPECTRAL_FLATNESS);
+        if (audio_features_selector[DOMINANT_FREQUENCY]) features[DOMINANT_FREQUENCY] = audio_feat_to_float(fxp_feats[DOMINANT_FREQUENCY], DOMINANT_FREQUENCY);
+        copy_audio_feature_range(features, fxp_feats, POWER_SPECTRAL_DENSITY, POWER_SPECTRAL_DENSITY + N_PSD - 1);
     }
 
     if (block == BLOCK_AUDIO_MEL || block == BLOCK_AUDIO_ALL) {
         audio_mel_features(audio_features_selector, sig_q14, len, fxp_feats);
-        copy_feature_range(features, fxp_feats, MEL_FREQUENCY_CEPSTRAL_COEFFICIENT, ZERO_CROSSING_RATE - 1);
+        copy_audio_feature_range(features, fxp_feats, MEL_FREQUENCY_CEPSTRAL_COEFFICIENT, ZERO_CROSSING_RATE - 1);
     }
 
     if (block == BLOCK_AUDIO_SCALAR || block == BLOCK_AUDIO_ALL) {
         audio_crest_q16(audio_features_selector, sig_q14, len, fxp_feats);
-        if (audio_features_selector[CREST_FACTOR]) features[CREST_FACTOR] = FXP_TO_FLOAT(fxp_feats[CREST_FACTOR], FXP_PIPE_FRAC);
+        if (audio_features_selector[CREST_FACTOR]) features[CREST_FACTOR] = audio_feat_to_float(fxp_feats[CREST_FACTOR], CREST_FACTOR);
     }
 
     free(sig_q14);
     free(fxp_feats);
 }
 
-static void copy_imu_local(float *dst, const fxp_q16_t *src, int base)
+static void copy_imu_local(float *dst, const fxp_feat_t *src, int base)
 {
     for (uint16_t local = 0; local < Num_imu_feat_families; local++) {
         if (imu_features_selector[base + local]) {
-            dst[base + local] = FXP_TO_FLOAT(src[local], FXP_PIPE_FRAC);
+            dst[base + local] = imu_feat_to_float(src[local], (uint16_t)(base + local));
         }
     }
 }
@@ -264,7 +280,7 @@ static void apply_imu_block(progressive_block_t block,
     q11_5_t *axis = (q11_5_t *)malloc((size_t)len * sizeof(q11_5_t));
     uq10_6_t *l2a = (uq10_6_t *)malloc((size_t)len * sizeof(uq10_6_t));
     uq5_11_t *l2g = (uq5_11_t *)malloc((size_t)len * sizeof(uq5_11_t));
-    fxp_q16_t local_feats[Num_imu_feat_families];
+    fxp_feat_t local_feats[Num_imu_feat_families];
     if (!raw_q5 || !axis || !l2a || !l2g) {
         free(raw_q5);
         free(axis);
@@ -294,7 +310,7 @@ static void apply_imu_block(progressive_block_t block,
             for (int16_t i = 0; i < len; i++) axis[i] = raw_q5[i][axes[s]];
             memset(local_feats, 0, sizeof(local_feats));
             prog_imu_sig_raw_t raw = {.data = axis, .len = len};
-            imu_run_features_q16(&imu_features_selector[base], view_from_raw(raw), local_feats);
+            imu_run_features_native(&imu_features_selector[base], view_from_raw(raw), local_feats);
             copy_imu_local(features, local_feats, base);
         }
     }
@@ -303,13 +319,13 @@ static void apply_imu_block(progressive_block_t block,
         if (any_required(imu_features_selector, ACCEL_COMBO, (uint16_t)(ACCEL_COMBO + Num_imu_feat_families - 1))) {
             memset(local_feats, 0, sizeof(local_feats));
             prog_imu_sig_l2a_t s_l2a = {.data = l2a, .len = len};
-            imu_run_features_q16(&imu_features_selector[ACCEL_COMBO], view_from_l2a(s_l2a), local_feats);
+            imu_run_features_native(&imu_features_selector[ACCEL_COMBO], view_from_l2a(s_l2a), local_feats);
             copy_imu_local(features, local_feats, ACCEL_COMBO);
         }
         if (any_required(imu_features_selector, GYRO_COMBO, (uint16_t)(GYRO_COMBO + Num_imu_feat_families - 1))) {
             memset(local_feats, 0, sizeof(local_feats));
             prog_imu_sig_l2g_t s_l2g = {.data = l2g, .len = len};
-            imu_run_features_q16(&imu_features_selector[GYRO_COMBO], view_from_l2g(s_l2g), local_feats);
+            imu_run_features_native(&imu_features_selector[GYRO_COMBO], view_from_l2g(s_l2g), local_feats);
             copy_imu_local(features, local_feats, GYRO_COMBO);
         }
     }

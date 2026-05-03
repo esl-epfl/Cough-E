@@ -18,8 +18,8 @@
 //////////////////////////////////////
 /* Input data                       */
 // ///////////////////////////////////
-#include <input_data/20724/audio_input_20724_t1_sit_traffic_deep_breathing.h>
-#include <input_data/20724/imu_input_20724_t1_sit_traffic_deep_breathing.h>
+#include <input_data/20724/audio_input_20724_t2_sit_traffic_cough.h>
+#include <input_data/20724/imu_input_20724_t2_sit_traffic_cough.h>
 #include <input_data/20724/bio_input_20724.h>
 //////////////////////////////////////
 

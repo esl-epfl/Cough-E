@@ -328,40 +328,34 @@ static const uint32_t k_azc_eps_l2g_q11[8] = {614U, 819U, 1024U, 1229U, 1434U, 1
 static void _run_raw_feature(const int8_t *features_selector,
                              const imu_sig_view_t *sig,
                              uint8_t local,
-                             fxp_q16_t *out)
+                             fxp_feat_t *out)
 {
     switch (local) {
         case LINE_LENGTH:
-            *out = fxp_q16_from_u32(
-                _line_length(sig->data.raw_data, sig->len, 16U, 1U, 0U, 4U),
-                FXP_FRAC_IMU_LINE_LENGTH_RAW);
+            *out = (fxp_feat_t)_line_length(sig->data.raw_data, sig->len, 16U, 1U, 0U, 4U);
             return;
         case KURTOSIS:
-            *out = fxp_q16_from_s32(_kurtosis_raw(sig->data.raw_data, sig->len), FXP_FRAC_IMU_KURTOSIS_RAW);
+            *out = (fxp_feat_t)_kurtosis_raw(sig->data.raw_data, sig->len);
             return;
         case ROOT_MEANS_SQUARED_IMU:
-            *out = fxp_q16_from_u32(
-                _rms16(sig->data.raw_data, sig->len, 16U, 1U, 3U, -1),
-                FXP_FRAC_IMU_RMS_RAW);
+            *out = (fxp_feat_t)_rms16(sig->data.raw_data, sig->len, 16U, 1U, 3U, -1);
             return;
         default:
             if (local >= APPROXIMATE_ZERO_CROSSING && local < Num_imu_feat_families) {
                 uint8_t idx = (uint8_t)(local - APPROXIMATE_ZERO_CROSSING);
                 int16_t azc = _azc_from_signal(sig->data.raw_data, sig->len, 16U, 1U,
                                                k_azc_eps_raw_q5[idx]);
-                *out = fxp_q16_from_int((int32_t)azc);
+                *out = (fxp_feat_t)azc;
             }
             (void)features_selector;
             return;
     }
 }
 
-static void _run_l2a_feature(const imu_sig_view_t *sig, uint8_t local, fxp_q16_t *out)
+static void _run_l2a_feature(const imu_sig_view_t *sig, uint8_t local, fxp_feat_t *out)
 {
     if (local == ROOT_MEANS_SQUARED_IMU) {
-        *out = fxp_q16_from_u32(
-            _rms16(sig->data.l2a_data, sig->len, 16U, 0U, 5U, -1),
-            FXP_FRAC_IMU_RMS_L2A);
+        *out = (fxp_feat_t)_rms16(sig->data.l2a_data, sig->len, 16U, 0U, 5U, -1);
         return;
     }
 
@@ -369,28 +363,25 @@ static void _run_l2a_feature(const imu_sig_view_t *sig, uint8_t local, fxp_q16_t
         uint8_t idx = (uint8_t)(local - APPROXIMATE_ZERO_CROSSING);
         int16_t azc = _azc_from_signal(sig->data.l2a_data, sig->len, 16U, 0U,
                                        k_azc_eps_l2a_q6[idx]);
-        *out = fxp_q16_from_int((int32_t)azc);
+        *out = (fxp_feat_t)azc;
     }
 }
 
-static void _run_l2g_feature(const imu_sig_view_t *sig, uint8_t local, fxp_q16_t *out)
+static void _run_l2g_feature(const imu_sig_view_t *sig, uint8_t local, fxp_feat_t *out)
 {
     switch (local) {
         case LINE_LENGTH:
-            *out = fxp_q16_from_u32(
-                fxp_sat_u16_from_u32(_line_length(sig->data.l2g_data, sig->len, 16U, 0U, 2U, 0U)),
-                FXP_FRAC_IMU_LINE_LENGTH_L2G);
+            *out = (fxp_feat_t)fxp_sat_u16_from_u32(
+                _line_length(sig->data.l2g_data, sig->len, 16U, 0U, 2U, 0U));
             return;
         case ROOT_MEANS_SQUARED_IMU:
-            *out = fxp_q16_from_u32(
-                _rms16(sig->data.l2g_data, sig->len, 16U, 0U, 3U, -1),
-                FXP_FRAC_IMU_RMS_L2G);
+            *out = (fxp_feat_t)_rms16(sig->data.l2g_data, sig->len, 16U, 0U, 3U, -1);
             return;
         case CREST_FACTOR_IMU: {
             uq7_9_t rms = (uq7_9_t)_rms16(sig->data.l2g_data, sig->len, 16U, 0U, 3U, -1);
             uq5_11_t peak = _max_l2g(sig->data.l2g_data, sig->len);
             uq2_14_t cf = (rms > 0U) ? _cf_l2g_result(peak, rms) : 0U;
-            *out = fxp_q16_from_u32((uint32_t)cf, FXP_FRAC_IMU_CREST_L2G);
+            *out = (fxp_feat_t)cf;
             return;
         }
         default:
@@ -398,29 +389,29 @@ static void _run_l2g_feature(const imu_sig_view_t *sig, uint8_t local, fxp_q16_t
                 uint8_t idx = (uint8_t)(local - APPROXIMATE_ZERO_CROSSING);
                 int16_t azc = _azc_from_signal(sig->data.l2g_data, sig->len, 16U, 0U,
                                                k_azc_eps_l2g_q11[idx]);
-                *out = fxp_q16_from_int((int32_t)azc);
+                *out = (fxp_feat_t)azc;
             }
             return;
     }
 }
 
-void imu_run_features_q16(const int8_t *features_selector, imu_sig_view_t sig, fxp_q16_t *feats_q16)
+void imu_run_features_native(const int8_t *features_selector, imu_sig_view_t sig, fxp_feat_t *feats)
 {
     for (uint8_t local = 0U; local < Num_imu_feat_families; local++) {
         if (features_selector[local] != 1) continue;
 
         switch (sig.kind) {
             case IMU_SIG_KIND_RAW:
-                _run_raw_feature(features_selector, &sig, local, &feats_q16[local]);
+                _run_raw_feature(features_selector, &sig, local, &feats[local]);
                 break;
             case IMU_SIG_KIND_L2A:
-                _run_l2a_feature(&sig, local, &feats_q16[local]);
+                _run_l2a_feature(&sig, local, &feats[local]);
                 break;
             case IMU_SIG_KIND_L2G:
-                _run_l2g_feature(&sig, local, &feats_q16[local]);
+                _run_l2g_feature(&sig, local, &feats[local]);
                 break;
             default:
-                fprintf(stderr, "IMU dispatch (Q16): unsupported signal kind %d.\n", (int)sig.kind);
+                fprintf(stderr, "IMU dispatch: unsupported signal kind %d.\n", (int)sig.kind);
                 abort();
         }
     }

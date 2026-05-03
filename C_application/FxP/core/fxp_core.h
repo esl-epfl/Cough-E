@@ -201,53 +201,11 @@ static inline int32_t fxp_abs_s32(int32_t x)
 /*  Pipeline carrier helpers                                                  */
 /* -------------------------------------------------------------------------- */
 
-/* Unified fixed-point carrier for cross-module feature exchange and I/O. */
+/* Q16 is still used for scores, probabilities, bio features, and generic ratios. */
 typedef int32_t fxp_q16_t;
+typedef uint32_t fxp_feat_t;
 
 #define FXP_PIPE_FRAC 16
-#define FXP_Q16_ONE ((fxp_q16_t)(1 << FXP_PIPE_FRAC))
-
-static inline fxp_q16_t fxp_q16_from_int(int32_t x)
-{
-    int64_t v = ((int64_t)x) << FXP_PIPE_FRAC;
-    return fxp_sat_s32_from_s64(v);
-}
-
-static inline fxp_q16_t fxp_q16_from_u32(uint32_t x, uint8_t src_frac)
-{
-    int32_t shift = (int32_t)FXP_PIPE_FRAC - (int32_t)src_frac;
-    int64_t v = (int64_t)x;
-    if (shift > 0) {
-        v <<= shift;
-    } else if (shift < 0) {
-        int32_t r = -shift;
-        if (r >= 63) {
-            v = 0;
-        } else {
-            v = (v + ((int64_t)1 << (r - 1))) >> r;
-        }
-    }
-    return fxp_sat_s32_from_s64(v);
-}
-
-static inline fxp_q16_t fxp_q16_from_s32(int32_t x, uint8_t src_frac)
-{
-    int32_t shift = (int32_t)FXP_PIPE_FRAC - (int32_t)src_frac;
-    int64_t v = (int64_t)x;
-    if (shift > 0) {
-        v <<= shift;
-    } else if (shift < 0) {
-        int32_t r = -shift;
-        if (r >= 63) {
-            v = 0;
-        } else if (v >= 0) {
-            v = (v + ((int64_t)1 << (r - 1))) >> r;
-        } else {
-            v = -(((-v) + ((int64_t)1 << (r - 1))) >> r);
-        }
-    }
-    return fxp_sat_s32_from_s64(v);
-}
 
 /* -------------------------------------------------------------------------- */
 /*  Float/fixed conversion helpers                                            */
@@ -295,7 +253,7 @@ static inline int16_t fxp_audio_from_float(float x)
 
 typedef int16_t cough_audio_sample_t; /* Q14 */
 typedef q11_5_t cough_imu_sample_t;   /* Q11.5 raw IMU */
-typedef fxp_q16_t cough_feat_t;       /* Q16 cross-module feature carrier */
+typedef fxp_feat_t cough_feat_t;      /* Native per-feature fixed-point carrier */
 
 static inline cough_audio_sample_t cough_source_audio_sample(float x)
 {

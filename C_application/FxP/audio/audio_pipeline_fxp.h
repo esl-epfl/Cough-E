@@ -11,17 +11,17 @@ void audio_fft_features(const int8_t *features_selector,
                         const int16_t *sig_q14,
                         int16_t len,
                         int16_t fs,
-                        fxp_q16_t *feats_q16);
+                        fxp_feat_t *feats);
 
 void audio_psd_features(const int8_t *features_selector,
                         const int16_t *sig_q14,
                         int16_t sig_len,
                         int16_t fs,
-                        fxp_q16_t *feats_q16);
+                        fxp_feat_t *feats);
 
 void audio_mel_features(const int8_t *features_selector,
                         const int16_t *sig_q14,
                         int16_t len,
-                        fxp_q16_t *feats_q16);
+                        fxp_feat_t *feats);
 
 #endif

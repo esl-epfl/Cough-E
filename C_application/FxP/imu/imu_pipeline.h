@@ -62,7 +62,7 @@ static inline imu_sig_view_t imu_view_from_l2g(imu_sig_l2g_t s)
 /*  IMU feature dispatch entry points                                          */
 /* -------------------------------------------------------------------------- */
 
-void imu_run_features_q16(const int8_t *features_selector, imu_sig_view_t sig, fxp_q16_t *feats_q16);
+void imu_run_features_native(const int8_t *features_selector, imu_sig_view_t sig, fxp_feat_t *feats);
 
 uq10_6_t imu_l2_norm_accel_from_raw(q11_5_t ax, q11_5_t ay, q11_5_t az);
 uq5_11_t imu_l2_norm_gyro_from_raw(q11_5_t gx, q11_5_t gy, q11_5_t gz);

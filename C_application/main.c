@@ -13,14 +13,16 @@
 
 #ifdef FXP_MODE
 #include <core/fxp_core.h>
-#define FEAT_THRESHOLD_AUDIO ((feat_t)FXP_AUDIO_SCORE_TH_Q16)
-#define FEAT_THRESHOLD_IMU ((feat_t)FXP_IMU_SCORE_TH_Q16)
+typedef fxp_q16_t score_t;
+#define SCORE_THRESHOLD_AUDIO ((score_t)FXP_AUDIO_SCORE_TH_Q16)
+#define SCORE_THRESHOLD_IMU ((score_t)FXP_IMU_SCORE_TH_Q16)
 #else
-#define FEAT_THRESHOLD_AUDIO ((feat_t)AUDIO_TH)
-#define FEAT_THRESHOLD_IMU ((feat_t)IMU_TH)
+typedef feat_t score_t;
+#define SCORE_THRESHOLD_AUDIO ((score_t)AUDIO_TH)
+#define SCORE_THRESHOLD_IMU ((score_t)IMU_TH)
 #endif
 
-static inline uint8_t is_cough(feat_t score, feat_t threshold)
+static inline uint8_t is_cough(score_t score, score_t threshold)
 {
     return (score >= threshold) ? 1U : 0U;
 }
@@ -54,8 +56,8 @@ int main(void)
     feat_t *features_audio_model = (feat_t *)malloc((size_t)TOT_FEATURES_AUDIO_MODEL_AUDIO * sizeof(feat_t));
     feat_t *features_imu_model = (feat_t *)malloc((size_t)TOT_FEATURES_IMU_MODEL_IMU * sizeof(feat_t));
 
-    feat_t audio_score = 0;
-    feat_t imu_score = 0;
+    score_t audio_score = 0;
+    score_t imu_score = 0;
 
     uint16_t *starts = (uint16_t *)malloc((size_t)MAX_PEAKS_EXPECTED * sizeof(uint16_t));
     uint16_t *ends = (uint16_t *)malloc((size_t)MAX_PEAKS_EXPECTED * sizeof(uint16_t));
@@ -65,7 +67,7 @@ int main(void)
     uint16_t n_peaks = 0;
     uint16_t new_added = 0;
 
-    feat_t *audio_confidence = (feat_t *)malloc((size_t)MAX_PEAKS_EXPECTED * sizeof(feat_t));
+    score_t *audio_confidence = (score_t *)malloc((size_t)MAX_PEAKS_EXPECTED * sizeof(score_t));
 
     uint32_t idx_start_window = 0;
     uint16_t n_idxs_above_th = 0;
@@ -145,7 +147,7 @@ int main(void)
             }
 
             imu_score = imu_predict(features_imu_model);
-            fsm_state.model_cls_out = is_cough(imu_score, FEAT_THRESHOLD_IMU) ? COUGH_OUT : NON_COUGH_OUT;
+            fsm_state.model_cls_out = is_cough(imu_score, SCORE_THRESHOLD_IMU) ? COUGH_OUT : NON_COUGH_OUT;
         } else {
             if (idx_start_window + WINDOW_SAMP_AUDIO >= AUDIO_LEN) {
                 break;
@@ -168,7 +170,7 @@ int main(void)
             }
 
             audio_score = audio_predict(features_audio_model);
-            fsm_state.model_cls_out = is_cough(audio_score, FEAT_THRESHOLD_AUDIO) ? COUGH_OUT : NON_COUGH_OUT;
+            fsm_state.model_cls_out = is_cough(audio_score, SCORE_THRESHOLD_AUDIO) ? COUGH_OUT : NON_COUGH_OUT;
 
             _get_cough_peaks(&audio_runtime_in[idx_start_window], WINDOW_SAMP_AUDIO, AUDIO_FS,
                              &starts[n_peaks], &ends[n_peaks], &locs[n_peaks], &peaks[n_peaks], &new_added);
@@ -191,7 +193,7 @@ int main(void)
                 uint16_t *idxs_above_th = (uint16_t *)malloc((size_t)n_peaks * sizeof(uint16_t));
 
                 for (uint16_t i = 0; i < n_peaks; i++) {
-                    if (is_cough(audio_confidence[i], FEAT_THRESHOLD_AUDIO)) {
+                    if (is_cough(audio_confidence[i], SCORE_THRESHOLD_AUDIO)) {
                         idxs_above_th[n_idxs_above_th] = i;
                         n_idxs_above_th++;
                     }

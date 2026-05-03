@@ -132,7 +132,7 @@ static uq17_15_t _kurtosis(const audio_fft_view_t *view,
 
 static void _write_fft_features(const int8_t *features_selector,
                                 const audio_fft_view_t *view,
-                                fxp_q16_t *feats_q16)
+                                fxp_feat_t *feats)
 {
     int need_rolloff = features_selector[SPECTRAL_ROLLOFF];
     int need_centroid = features_selector[SPECTRAL_CENTROID]
@@ -141,17 +141,16 @@ static void _write_fft_features(const int8_t *features_selector,
     int need_spread = features_selector[SPECTRAL_SPREAD]
                    || features_selector[SPECTRAL_KURTOSIS];
     int need_kurt = features_selector[SPECTRAL_KURTOSIS];
-// TO CHANGE i dont want everything to be simplified to Q16 
     if (need_rolloff) {
         uq12_20_t rolloff_q20 = _rolloff(view);
-        feats_q16[SPECTRAL_ROLLOFF] = fxp_q16_from_u32(rolloff_q20, FXP_FRAC_AUDIO_FFT_FREQUENCIES);
+        feats[SPECTRAL_ROLLOFF] = (fxp_feat_t)rolloff_q20;
     }
 
     uq11_21_t centroid_q21 = 0;
     if (need_centroid) {
         centroid_q21 = _centroid(view);
         if (features_selector[SPECTRAL_CENTROID]) {
-            feats_q16[SPECTRAL_CENTROID] = fxp_q16_from_u32(centroid_q21, FXP_FRAC_AUDIO_FFT_CENTROID);
+            feats[SPECTRAL_CENTROID] = (fxp_feat_t)centroid_q21;
         }
     }
 
@@ -159,13 +158,13 @@ static void _write_fft_features(const int8_t *features_selector,
     if (need_spread) {
         spread_q5 = _spread(view, centroid_q21);
         if (features_selector[SPECTRAL_SPREAD]) {
-            feats_q16[SPECTRAL_SPREAD] = fxp_q16_from_u32((uint32_t)spread_q5, FXP_FRAC_AUDIO_FFT_SPREAD);
+            feats[SPECTRAL_SPREAD] = (fxp_feat_t)spread_q5;
         }
     }
 
     if (need_kurt) {
         uq17_15_t kurt_q15 = _kurtosis(view, centroid_q21, spread_q5);
-        feats_q16[SPECTRAL_KURTOSIS] = fxp_q16_from_u32(kurt_q15, FXP_FRAC_AUDIO_FFT_KURTOSIS);
+        feats[SPECTRAL_KURTOSIS] = (fxp_feat_t)kurt_q15;
     }
 }
 
@@ -178,9 +177,9 @@ void audio_fft_features(const int8_t *features_selector,
                         const int16_t *sig_q14,
                         int16_t len,
                         int16_t fs,
-                        fxp_q16_t *feats_q16)
+                        fxp_feat_t *feats)
 {
-    if (!features_selector || !sig_q14 || !feats_q16 || len <= 0 || fs <= 0) return;
+    if (!features_selector || !sig_q14 || !feats || len <= 0 || fs <= 0) return;
 
     int need_rolloff = features_selector[SPECTRAL_ROLLOFF];
     int need_centroid = features_selector[SPECTRAL_CENTROID]
@@ -236,7 +235,7 @@ void audio_fft_features(const int8_t *features_selector,
         .sum_mags_q17 = sum_q17,
     };
 
-    _write_fft_features(features_selector, &view, feats_q16);
+    _write_fft_features(features_selector, &view, feats);
 
     free(sig_q);
     free(cx_out);
@@ -414,7 +413,7 @@ static void _bandpowers(const audio_psd_view_t *view,
 
 static void _write_psd_features(const int8_t *features_selector,
                                 const audio_psd_view_t *view,
-                                fxp_q16_t *feats_q16)
+                                fxp_feat_t *feats)
 {
     int need_flatness = features_selector[SPECTRAL_FLATNESS];
     int need_dom_freq = features_selector[DOMINANT_FREQUENCY];
@@ -430,12 +429,12 @@ static void _write_psd_features(const int8_t *features_selector,
 
     if (need_dom_freq) {
         uq12_20_t dom_q20 = _dominant_freq(view);
-        feats_q16[DOMINANT_FREQUENCY] = fxp_q16_from_u32(dom_q20, FXP_FRAC_AUDIO_FFT_FREQUENCIES);
+        feats[DOMINANT_FREQUENCY] = (fxp_feat_t)dom_q20;
     }
 
     if (need_flatness) {
         uq0_16_t flatness_q16 = _flatness(view);
-        feats_q16[SPECTRAL_FLATNESS] = fxp_q16_from_u32(flatness_q16, FXP_FRAC_AUDIO_PSD_FLATNESS);
+        feats[SPECTRAL_FLATNESS] = (fxp_feat_t)flatness_q16;
     }
 
     if (need_bandpowers) {
@@ -443,8 +442,7 @@ static void _write_psd_features(const int8_t *features_selector,
         _bandpowers(view, &features_selector[POWER_SPECTRAL_DENSITY], band_powers_q16);
         for (int8_t i = 0; i < N_PSD; i++) {
             if (features_selector[POWER_SPECTRAL_DENSITY + i]) {
-                feats_q16[POWER_SPECTRAL_DENSITY + i] =
-                    fxp_q16_from_u32(band_powers_q16[i], FXP_FRAC_AUDIO_PSD_BANDPOWER);
+                feats[POWER_SPECTRAL_DENSITY + i] = (fxp_feat_t)band_powers_q16[i];
             }
         }
     }
@@ -454,9 +452,9 @@ void audio_psd_features(const int8_t *features_selector,
                         const int16_t *sig_q14,
                         int16_t sig_len,
                         int16_t fs,
-                        fxp_q16_t *feats_q16)
+                        fxp_feat_t *feats)
 {
-    if (!features_selector || !sig_q14 || !feats_q16 || sig_len <= 0 || fs <= 0) return;
+    if (!features_selector || !sig_q14 || !feats || sig_len <= 0 || fs <= 0) return;
     if (sig_len < NPERSEG) return;
 
     int need_flatness = features_selector[SPECTRAL_FLATNESS];
@@ -557,7 +555,7 @@ void audio_psd_features(const int8_t *features_selector,
         .len = psd_len,
     };
 
-    _write_psd_features(features_selector, &view, feats_q16);
+    _write_psd_features(features_selector, &view, feats);
 
     free(sig_q);
     free(timedata);
@@ -791,9 +789,9 @@ static int32_t _mel_entropy_row_q11(const uint64_t *row_power,
 void audio_mel_features(const int8_t *features_selector,
                         const int16_t *sig_q14,
                         int16_t len,
-                        fxp_q16_t *feats_q16)
+                        fxp_feat_t *feats)
 {
-    if (!features_selector || !sig_q14 || !feats_q16 || len <= 0) return;
+    if (!features_selector || !sig_q14 || !feats || len <= 0) return;
     if (!_mel_any_required(features_selector)) return;
     if (len <= PAD_LEN) return;
 
@@ -948,14 +946,14 @@ void audio_mel_features(const int8_t *features_selector,
                                                n_frames);
 
         int16_t mel_bin = idxs_needed[m];
-        feats_q16[MEL_FREQUENCY_CEPSTRAL_COEFFICIENT + mel_bin] =
-            fxp_q16_from_s32(_mel_q11_to_q9(mean_q11), FXP_MEL_OUTPUT_STATS_FRAC);
-        feats_q16[MEL_FREQUENCY_CEPSTRAL_COEFFICIENT + N_MFCC + mel_bin] =
-            fxp_q16_from_s32(_mel_q11_to_q9(std_q11), FXP_MEL_OUTPUT_STATS_FRAC);
-        feats_q16[MEL_FREQUENCY_CEPSTRAL_COEFFICIENT + (2 * N_MFCC) + mel_bin] =
-            fxp_q16_from_s32(_mel_q11_to_q9(row_max_q11), FXP_MEL_OUTPUT_STATS_FRAC);
-        feats_q16[MEL_FREQUENCY_CEPSTRAL_COEFFICIENT + (3 * N_MFCC) + mel_bin] =
-            fxp_q16_from_s32(_mel_q11_to_q14(ent_q11), FXP_MEL_OUTPUT_ENTROPY_FRAC);
+        feats[MEL_FREQUENCY_CEPSTRAL_COEFFICIENT + mel_bin] =
+            (fxp_feat_t)_mel_q11_to_q9(mean_q11);
+        feats[MEL_FREQUENCY_CEPSTRAL_COEFFICIENT + N_MFCC + mel_bin] =
+            (fxp_feat_t)_mel_q11_to_q9(std_q11);
+        feats[MEL_FREQUENCY_CEPSTRAL_COEFFICIENT + (2 * N_MFCC) + mel_bin] =
+            (fxp_feat_t)_mel_q11_to_q9(row_max_q11);
+        feats[MEL_FREQUENCY_CEPSTRAL_COEFFICIENT + (3 * N_MFCC) + mel_bin] =
+            (fxp_feat_t)_mel_q11_to_q14(ent_q11);
     }
 
     free(sig_q);

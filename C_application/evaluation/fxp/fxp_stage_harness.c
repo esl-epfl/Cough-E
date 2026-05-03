@@ -434,6 +434,22 @@ static void add_imu_kernel_errors(named_metric_t *table,
     }
 }
 
+static float audio_feat_to_float(fxp_feat_t value, uint16_t feature_idx)
+{
+    if (audio_feature_is_signed(feature_idx)) {
+        return FXP_TO_FLOAT((int32_t)value, audio_feature_frac_bits(feature_idx));
+    }
+    return FXP_TO_FLOAT(value, audio_feature_frac_bits(feature_idx));
+}
+
+static float imu_feat_to_float(fxp_feat_t value, uint16_t feature_idx)
+{
+    if (imu_feature_is_signed(feature_idx)) {
+        return FXP_TO_FLOAT((int32_t)value, imu_feature_frac_bits(feature_idx));
+    }
+    return FXP_TO_FLOAT(value, imu_feature_frac_bits(feature_idx));
+}
+
 int main(void)
 {
     named_metric_t audio_table[MAX_KERNELS];
@@ -445,7 +461,7 @@ int main(void)
     int n_imu_wins = ((IMU_LEN - WINDOW_SAMP_IMU) / IMU_STEP) + 1;
 
     float *audio_ref_feats = (float *)malloc((size_t)Number_AUDIO_Features * sizeof(float));
-    fxp_q16_t *audio_fxp_feats = (fxp_q16_t *)malloc((size_t)Number_AUDIO_Features * sizeof(fxp_q16_t));
+    fxp_feat_t *audio_fxp_feats = (fxp_feat_t *)malloc((size_t)Number_AUDIO_Features * sizeof(fxp_feat_t));
     int16_t *audio_q14 = (int16_t *)malloc((size_t)WINDOW_SAMP_AUDIO * sizeof(int16_t));
     if (!audio_ref_feats || !audio_fxp_feats || !audio_q14) {
         fprintf(stderr, "audio harness allocation failed.\n");
@@ -457,7 +473,7 @@ int main(void)
 
     for (int w = 0; w < n_audio_wins; w++) {
         const float *sig = &audio_in.air[w * AUDIO_STEP];
-        memset(audio_fxp_feats, 0, (size_t)Number_AUDIO_Features * sizeof(fxp_q16_t));
+        memset(audio_fxp_feats, 0, (size_t)Number_AUDIO_Features * sizeof(fxp_feat_t));
 
         for (int i = 0; i < WINDOW_SAMP_AUDIO; i++) {
             audio_q14[i] = FXP_AUDIO_FROM_FLOAT(sig[i]);
@@ -468,7 +484,7 @@ int main(void)
 
         for (int i = 0; i < Number_AUDIO_Features; i++) {
             if (!audio_features_selector[i]) continue;
-            float fxp_v = FXP_TO_FLOAT(audio_fxp_feats[i], FXP_PIPE_FRAC);
+            float fxp_v = audio_feat_to_float(audio_fxp_feats[i], (uint16_t)i);
             add_audio_kernel_errors(audio_table, &audio_n, i, audio_ref_feats[i], fxp_v);
         }
     }
@@ -478,7 +494,7 @@ int main(void)
     free(audio_q14);
 
     float imu_ref_feats[Number_IMU_Features];
-    fxp_q16_t imu_fxp_feats[Number_IMU_Features];
+    fxp_feat_t imu_fxp_feats[Number_IMU_Features];
     q11_5_t (*imu_q5)[Num_IMU_signals] = malloc((size_t)WINDOW_SAMP_IMU * sizeof(*imu_q5));
     if (!imu_q5) {
         fprintf(stderr, "imu harness allocation failed.\n");
@@ -500,7 +516,7 @@ int main(void)
 
         for (int i = 0; i < Number_IMU_Features; i++) {
             if (!imu_features_selector[i]) continue;
-            float fxp_v = FXP_TO_FLOAT(imu_fxp_feats[i], FXP_PIPE_FRAC);
+            float fxp_v = imu_feat_to_float(imu_fxp_feats[i], (uint16_t)i);
             add_imu_kernel_errors(imu_table, &imu_n, i, imu_ref_feats[i], fxp_v);
         }
     }

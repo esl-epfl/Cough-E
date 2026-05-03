@@ -3,6 +3,8 @@
 
 #include <inttypes.h>
 
+#include <core/fxp_core.h>
+
 /* Defines all the parameters of IMU features extraction */
 
 #define WIND_LEN_IMU_NUM 1U
@@ -82,6 +84,44 @@ enum imu_signal_features {
 
     Number_IMU_Features = GYRO_COMBO + Num_imu_feat_families
 };
+
+static inline uint8_t imu_feature_frac_bits(uint16_t feature_idx)
+{
+    uint16_t base;
+    uint16_t local;
+
+    if (feature_idx >= Number_IMU_Features) return FXP_PIPE_FRAC;
+
+    base = (uint16_t)((feature_idx / Num_imu_feat_families) * Num_imu_feat_families);
+    local = (uint16_t)(feature_idx - base);
+
+    if (local >= APPROXIMATE_ZERO_CROSSING && local < Num_imu_feat_families) {
+        return 0U;
+    }
+
+    if (base == GYRO_COMBO) {
+        if (local == LINE_LENGTH) return FXP_FRAC_IMU_LINE_LENGTH_L2G;
+        if (local == ROOT_MEANS_SQUARED_IMU) return FXP_FRAC_IMU_RMS_L2G;
+        if (local == CREST_FACTOR_IMU) return FXP_FRAC_IMU_CREST_L2G;
+    } else if (base == ACCEL_COMBO) {
+        if (local == ROOT_MEANS_SQUARED_IMU) return FXP_FRAC_IMU_RMS_L2A;
+    } else {
+        if (local == LINE_LENGTH) return FXP_FRAC_IMU_LINE_LENGTH_RAW;
+        if (local == KURTOSIS) return FXP_FRAC_IMU_KURTOSIS_RAW;
+        if (local == ROOT_MEANS_SQUARED_IMU) return FXP_FRAC_IMU_RMS_RAW;
+    }
+
+    return FXP_PIPE_FRAC;
+}
+
+static inline uint8_t imu_feature_is_signed(uint16_t feature_idx)
+{
+    uint16_t local;
+
+    if (feature_idx >= Number_IMU_Features) return 0U;
+    local = (uint16_t)(feature_idx % Num_imu_feat_families);
+    return (local == KURTOSIS) ? 1U : 0U;
+}
 
 
 #endif

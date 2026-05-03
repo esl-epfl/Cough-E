@@ -665,10 +665,10 @@ static int check_imu_selector_fxp(const int8_t *features_selector)
     return 1;
 }
 
-static void audio_crest_factor_q16_from_q14(const int8_t *features_selector,
-                                            const int16_t *sig_q14,
-                                            int16_t len,
-                                            fxp_q16_t *feats_q16)
+static void audio_crest_factor_native_from_q14(const int8_t *features_selector,
+                                               const int16_t *sig_q14,
+                                               int16_t len,
+                                               fxp_feat_t *feats)
 {
     if (!features_selector[CREST_FACTOR] || len <= 0) return;
 
@@ -691,15 +691,15 @@ static void audio_crest_factor_q16_from_q14(const int8_t *features_selector,
 
     uint64_t mean_sq_q28 = (sum_sq_q28 + ((uint64_t)len >> 1U)) / (uint64_t)len;
     int32_t rms_q14 = (int32_t)fxp_sat_u32_from_u64(fxp_sqrt64(mean_sq_q28));
-    feats_q16[CREST_FACTOR] = (rms_q14 > 0)
+    feats[CREST_FACTOR] = (rms_q14 > 0)
         ? fxp_div_s32(max_v, rms_q14, FXP_PIPE_FRAC)
         : 0;
 }
 
-static void audio_zcr_q16_from_q14(const int8_t *features_selector,
-                                   const int16_t *sig_q14,
-                                   int16_t len,
-                                   fxp_q16_t *feats_q16)
+static void audio_zcr_native_from_q14(const int8_t *features_selector,
+                                      const int16_t *sig_q14,
+                                      int16_t len,
+                                      fxp_feat_t *feats)
 {
     if (!features_selector[ZERO_CROSSING_RATE] || len <= 1) return;
 
@@ -719,29 +719,29 @@ static void audio_zcr_q16_from_q14(const int8_t *features_selector,
 
     uint32_t denom = (uint32_t)(len - 1);
     uint32_t zcr_q16 = (uint32_t)((((uint64_t)crossings) << FXP_PIPE_FRAC) + (denom >> 1U)) / denom;
-    feats_q16[ZERO_CROSSING_RATE] = fxp_q16_from_u32(zcr_q16, FXP_PIPE_FRAC);
+    feats[ZERO_CROSSING_RATE] = (fxp_feat_t)zcr_q16;
 }
 
 void audio_features(const int8_t *features_selector,
                     const int16_t *sig_q14,
                     int16_t len,
                     int16_t fs,
-                    fxp_q16_t *feats_q16)
+                    fxp_feat_t *feats)
 {
-    if (!features_selector || !sig_q14 || !feats_q16 || len <= 0 || fs <= 0) return;
+    if (!features_selector || !sig_q14 || !feats || len <= 0 || fs <= 0) return;
     if (!check_audio_selector_fxp(features_selector)) abort();
 
-    audio_fft_features(features_selector, sig_q14, len, fs, feats_q16);
-    audio_psd_features(features_selector, sig_q14, len, fs, feats_q16);
-    audio_mel_features(features_selector, sig_q14, len, feats_q16);
-    audio_zcr_q16_from_q14(features_selector, sig_q14, len, feats_q16);
-    audio_crest_factor_q16_from_q14(features_selector, sig_q14, len, feats_q16);
+    audio_fft_features(features_selector, sig_q14, len, fs, feats);
+    audio_psd_features(features_selector, sig_q14, len, fs, feats);
+    audio_mel_features(features_selector, sig_q14, len, feats);
+    audio_zcr_native_from_q14(features_selector, sig_q14, len, feats);
+    audio_crest_factor_native_from_q14(features_selector, sig_q14, len, feats);
 }
 
 static void imu_features_from_raw_fxp(const int8_t *features_selector,
                                       const q11_5_t raw_fxp[][Num_IMU_signals],
                                       int16_t len,
-                                      fxp_q16_t *feats_q16)
+                                      fxp_feat_t *feats)
 {
     uq10_6_t *combo_l2a = (uq10_6_t *)malloc((size_t)len * sizeof(*combo_l2a));
     uq5_11_t *combo_l2g = (uq5_11_t *)malloc((size_t)len * sizeof(*combo_l2g));
@@ -775,17 +775,17 @@ static void imu_features_from_raw_fxp(const int8_t *features_selector,
             axis_samples[i] = raw_fxp[i][axis_ids[s]];
         }
         imu_sig_raw_t sig_raw = {.data = axis_samples, .len = len};
-        imu_run_features_q16(&features_selector[base], imu_view_from_raw(sig_raw), &feats_q16[base]);
+        imu_run_features_native(&features_selector[base], imu_view_from_raw(sig_raw), &feats[base]);
     }
 
     if (fxp_is_required(features_selector, ACCEL_COMBO, (uint16_t)(ACCEL_COMBO + Num_imu_feat_families - 1))) {
         imu_sig_l2a_t s_l2a = {.data = combo_l2a, .len = len};
-        imu_run_features_q16(&features_selector[ACCEL_COMBO], imu_view_from_l2a(s_l2a), &feats_q16[ACCEL_COMBO]);
+        imu_run_features_native(&features_selector[ACCEL_COMBO], imu_view_from_l2a(s_l2a), &feats[ACCEL_COMBO]);
     }
 
     if (fxp_is_required(features_selector, GYRO_COMBO, (uint16_t)(GYRO_COMBO + Num_imu_feat_families - 1))) {
         imu_sig_l2g_t s_l2g = {.data = combo_l2g, .len = len};
-        imu_run_features_q16(&features_selector[GYRO_COMBO], imu_view_from_l2g(s_l2g), &feats_q16[GYRO_COMBO]);
+        imu_run_features_native(&features_selector[GYRO_COMBO], imu_view_from_l2g(s_l2g), &feats[GYRO_COMBO]);
     }
 
     free(combo_l2a);
@@ -796,11 +796,11 @@ static void imu_features_from_raw_fxp(const int8_t *features_selector,
 void imu_features(const int8_t *features_selector,
                   const q11_5_t sig_raw[][Num_IMU_signals],
                   int16_t len,
-                  fxp_q16_t *feats_q16)
+                  fxp_feat_t *feats)
 {
-    if (!features_selector || !sig_raw || !feats_q16 || len <= 0) return;
+    if (!features_selector || !sig_raw || !feats || len <= 0) return;
     if (!check_imu_selector_fxp(features_selector)) abort();
-    imu_features_from_raw_fxp(features_selector, sig_raw, len, feats_q16);
+    imu_features_from_raw_fxp(features_selector, sig_raw, len, feats);
 }
 
 #endif

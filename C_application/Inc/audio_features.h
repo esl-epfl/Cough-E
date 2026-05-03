@@ -3,6 +3,8 @@
 
 #include <inttypes.h>
 
+#include <core/fxp_core.h>
+
 /* Defines of the hyperparameters of audio features extraction */
 
 
@@ -90,5 +92,42 @@ enum audio_features_families{
     ENERGY_ENVELOPE_PEAK_DETECT,
     Number_AUDIO_Features = ENERGY_ENVELOPE_PEAK_DETECT + N_EEPD// Hardcoded just to get the final length
 };
+
+static inline uint8_t audio_feature_frac_bits(uint16_t feature_idx)
+{
+    if (feature_idx == SPECTRAL_ROLLOFF || feature_idx == DOMINANT_FREQUENCY) {
+        return FXP_FRAC_AUDIO_FFT_FREQUENCIES;
+    }
+    if (feature_idx == SPECTRAL_CENTROID) return FXP_FRAC_AUDIO_FFT_CENTROID;
+    if (feature_idx == SPECTRAL_SPREAD) return FXP_FRAC_AUDIO_FFT_SPREAD;
+    if (feature_idx == SPECTRAL_KURTOSIS) return FXP_FRAC_AUDIO_FFT_KURTOSIS;
+    if (feature_idx == SPECTRAL_FLATNESS) return FXP_FRAC_AUDIO_PSD_FLATNESS;
+
+    if (feature_idx >= POWER_SPECTRAL_DENSITY &&
+        feature_idx < POWER_SPECTRAL_DENSITY + N_PSD) {
+        return FXP_FRAC_AUDIO_PSD_BANDPOWER;
+    }
+
+    if (feature_idx >= MEL_FREQUENCY_CEPSTRAL_COEFFICIENT &&
+        feature_idx < MEL_FREQUENCY_CEPSTRAL_COEFFICIENT + (3U * N_MFCC)) {
+        return 9U;
+    }
+    if (feature_idx >= MEL_FREQUENCY_CEPSTRAL_COEFFICIENT + (3U * N_MFCC) &&
+        feature_idx < MEL_FREQUENCY_CEPSTRAL_COEFFICIENT + (4U * N_MFCC)) {
+        return 14U;
+    }
+
+    return FXP_PIPE_FRAC;
+}
+
+static inline uint8_t audio_feature_is_signed(uint16_t feature_idx)
+{
+    if (feature_idx >= MEL_FREQUENCY_CEPSTRAL_COEFFICIENT &&
+        feature_idx < MEL_FREQUENCY_CEPSTRAL_COEFFICIENT + (3U * N_MFCC)) {
+        return 1U;
+    }
+
+    return 0U;
+}
 
 #endif
