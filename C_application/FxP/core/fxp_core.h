@@ -40,6 +40,7 @@ typedef uint16_t uq7_9_t;
 typedef uint16_t uq5_11_t;
 typedef uint16_t uq2_14_t;
 typedef uint16_t uq10_6_t;
+typedef uint16_t uq13_3_t;
 typedef uint16_t uq11_5_t;
 typedef uint16_t uq0_16_t;
 
@@ -84,6 +85,39 @@ static inline uint32_t fxp_sat_u32_from_u64(uint64_t x)
 {
     if (x > UINT32_MAX) return UINT32_MAX;
     return (uint32_t)x;
+}
+
+static inline uint16_t fxp_sat_add_u16(uint16_t a, uint16_t b)
+{
+    if ((uint16_t)(UINT16_MAX - a) < b) return UINT16_MAX;
+    return (uint16_t)(a + b);
+}
+
+static inline uint32_t fxp_sat_add_u32(uint32_t a, uint32_t b)
+{
+    if (UINT32_MAX - a < b) return UINT32_MAX;
+    return a + b;
+}
+
+static inline int16_t fxp_sat_add_s16(int16_t a, int16_t b)
+{
+    if (b > 0 && a > (int16_t)(INT16_MAX - b)) return INT16_MAX;
+    if (b < 0 && a < (int16_t)(INT16_MIN - b)) return INT16_MIN;
+    return (int16_t)(a + b);
+}
+
+static inline uint16_t fxp_sat_sl_u16(uint16_t v, uint8_t shift)
+{
+    if (shift >= 16U) return UINT16_MAX;
+    if (v > (uint16_t)(UINT16_MAX >> shift)) return UINT16_MAX;
+    return (uint16_t)(v << shift);
+}
+
+static inline uint32_t fxp_sat_sl_u32(uint32_t v, uint8_t shift)
+{
+    if (shift >= 32U) return UINT32_MAX;
+    if (v > (UINT32_MAX >> shift)) return UINT32_MAX;
+    return v << shift;
 }
 
 /* -------------------------------------------------------------------------- */
@@ -195,6 +229,18 @@ static inline int32_t fxp_abs_s32(int32_t x)
 {
     if (x == INT32_MIN) return INT32_MAX;
     return x < 0 ? -x : x;
+}
+
+static inline uint16_t fxp_abs_delta_s16(int16_t a, int16_t b)
+{
+    return (a >= b)
+        ? (uint16_t)((uint16_t)a - (uint16_t)b)
+        : (uint16_t)((uint16_t)b - (uint16_t)a);
+}
+
+static inline uint16_t fxp_abs_delta_u16(uint16_t a, uint16_t b)
+{
+    return (a >= b) ? (uint16_t)(a - b) : (uint16_t)(b - a);
 }
 
 /* -------------------------------------------------------------------------- */
