@@ -120,6 +120,13 @@ static inline int32_t fxp_round_div_s64(int64_t num, int32_t den)
     return -(int32_t)(((-num) + (den / 2)) / den);
 }
 
+static inline int32_t fxp_round_div_s32(int32_t num, int32_t den)
+{
+    if (den <= 0) return 0;
+    if (num >= 0) return (num + (den / 2)) / den;
+    return -(((-num) + (den / 2)) / den);
+}
+
 static inline int64_t fxp_round_div_i64(int64_t num, int32_t den)
 {
     if (den <= 0) return 0;
@@ -131,6 +138,12 @@ static inline uint32_t fxp_round_div_u64(uint64_t num, uint32_t den)
 {
     if (den == 0U) return 0U;
     return (uint32_t)((num + ((uint64_t)den >> 1)) / (uint64_t)den);
+}
+
+static inline uint32_t fxp_round_div_u32(uint32_t num, uint32_t den)
+{
+    if (den == 0U) return 0U;
+    return (num + (den >> 1)) / den;
 }
 
 static inline int32_t fxp_floor_div_s64(int64_t num, int32_t den)

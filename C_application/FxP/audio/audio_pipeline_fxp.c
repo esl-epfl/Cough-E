@@ -33,9 +33,9 @@ typedef struct {
     int16_t len;
 } audio_psd_view_t;
 
-#define FXP_FFT_ROLLOFF_95_Q16 ((uint32_t)62259U) /* round(0.95 * 2^16) */
+#define FXP_FFT_ROLLOFF_95_Q16 ((uint32_t)62259U)
 
-/* freq_q20 - centroid_q21, returned in Q13.19. */
+
 static inline q13_19_t _dev(uq12_20_t freq_q20, uq11_21_t centroid_q21)
 {
     uint32_t freq_q19 = freq_q20 >> 1;
@@ -87,7 +87,7 @@ static uq11_21_t _centroid(const audio_fft_view_t *view)
 
     uint64_t result_q21 = (accum_q38 + ((uint64_t)view->sum_mags_q17 >> 1U)) /
                           (uint64_t)view->sum_mags_q17;
-    return (uq11_21_t)fxp_sat_u32_from_u64(result_q21);
+    return (uq11_21_t)result_q21;
 }
 
 static uq11_5_t _spread(const audio_fft_view_t *view, uq11_21_t centroid_q21)
@@ -98,16 +98,15 @@ static uq11_5_t _spread(const audio_fft_view_t *view, uq11_21_t centroid_q21)
     uint64_t accum_q37_27 = 0;
     for (int16_t i = 0; i < view->len; i++) {
         q13_19_t dev_q19 = _dev(view->freqs_q20[i], centroid_q21);
-        uint64_t dev2_q25_7 = ((uint64_t)((int64_t)dev_q19 * (int64_t)dev_q19)) >> 31;
-        accum_q37_27 += dev2_q25_7 * (uint64_t)view->mags_q20[i];
+        uint32_t dev2_q25_7 = (uint32_t)(((uint64_t)((int64_t)dev_q19 * (int64_t)dev_q19)) >> 31);
+        accum_q37_27 += (uint64_t)dev2_q25_7 * (uint64_t)view->mags_q20[i];
     }
 
-    uint64_t mean_q22_10 = (accum_q37_27 + ((uint64_t)view->sum_mags_q17 >> 1U)) /
+    uint32_t mean_q22_10 = (uint32_t)(accum_q37_27 + ((uint64_t)view->sum_mags_q17 >> 1U)) /
                            (uint64_t)view->sum_mags_q17;
-    return (uq11_5_t)fxp_sat_u16_from_u32((uint32_t)fxp_sqrt64(mean_q22_10));
+    return (uq11_5_t)fxp_sqrt32(mean_q22_10);
 }
 
-/* Spectral kurtosis result in a UQ17.15 carrier. */
 static uq17_15_t _kurtosis(const audio_fft_view_t *view,
                            uq11_21_t centroid_q21,
                            uq11_5_t spread_q5)
@@ -115,23 +114,23 @@ static uq17_15_t _kurtosis(const audio_fft_view_t *view,
     if (!view || !view->mags_q20 || !view->freqs_q20 || view->len <= 0) return 0;
     if (view->sum_mags_q17 == 0 || spread_q5 == 0) return 0;
 
-    uint32_t inv_spread_q20 = (uint32_t)(((1ULL << 25U) + ((uint64_t)spread_q5 >> 1U)) /
-                                         (uint64_t)spread_q5);
+    uint32_t inv_spread_q20 = ((1U << 25) + ((uint32_t)spread_q5 >> 1)) /
+                              (uint32_t)spread_q5;
     uint64_t accum_q32 = 0;
     for (int16_t i = 0; i < view->len; i++) {
         q13_19_t dev_q19 = _dev(view->freqs_q20[i], centroid_q21);
         int64_t norm_q39 = (int64_t)dev_q19 * (int64_t)inv_spread_q20;
         int32_t norm_q11 = _round_shift_s64_to_s32(norm_q39, 28U);
-        int32_t norm_q11_sat = fxp_sat_s16_from_s32(norm_q11);
-        uint64_t abs_norm_q11 = (norm_q11_sat < 0) ? (uint64_t)(-norm_q11_sat) : (uint64_t)norm_q11_sat;
-        uint64_t norm2_q22 = abs_norm_q11 * abs_norm_q11;
-        uint64_t norm4_q12 = (norm2_q22 * norm2_q22 + (1ULL << 31)) >> 32;
-        accum_q32 += norm4_q12 * (uint64_t)view->mags_q20[i];
+        uint32_t abs_norm_q11 = (norm_q11 < 0) ? (uint32_t)(-norm_q11)
+                                               : (uint32_t)norm_q11;
+        uint32_t norm2_q22 = abs_norm_q11 * abs_norm_q11;
+        uint32_t norm4_q12 = (uint32_t)(((uint64_t)norm2_q22 * norm2_q22 + (1ULL << 31)) >> 32);
+        accum_q32 += (uint64_t)norm4_q12 * (uint64_t)view->mags_q20[i];
     }
 
-    uint64_t kurt_q15 = (accum_q32 + ((uint64_t)view->sum_mags_q17 >> 1U)) /
-                        (uint64_t)view->sum_mags_q17;
-    return (uq17_15_t)fxp_sat_u32_from_u64(kurt_q15);
+    uint32_t kurt_q15 = (uint32_t)((accum_q32 + ((uint64_t)view->sum_mags_q17 >> 1U)) /
+                                   (uint64_t)view->sum_mags_q17);
+    return (uq17_15_t)kurt_q15;
 }
 
 static void _write_fft_features(const int8_t *features_selector,
@@ -145,8 +144,6 @@ static void _write_fft_features(const int8_t *features_selector,
     int need_spread = features_selector[SPECTRAL_SPREAD]
                    || features_selector[SPECTRAL_KURTOSIS];
     int need_kurt = features_selector[SPECTRAL_KURTOSIS];
-
-    if (!need_rolloff && !need_centroid && !need_spread && !need_kurt) return;
 
     if (need_rolloff) {
         uq12_20_t rolloff_q20 = _rolloff(view);
@@ -221,25 +218,25 @@ void audio_fft_features(const int8_t *features_selector,
 
     kiss_fftr(cfg, sig_q, cx_out);
 
-    uint64_t sum_q17 = 0ULL;
+    uint32_t sum_q17 = 0U;
     for (int16_t i = 0; i < fft_len; i++) {
         q12_20_t re_q20 = _fft_reim_q20(cx_out[i].r);
         q12_20_t im_q20 = _fft_reim_q20(cx_out[i].i);
         uint64_t re_sq = (uint64_t)((int64_t)re_q20 * (int64_t)re_q20);
         uint64_t im_sq = (uint64_t)((int64_t)im_q20 * (int64_t)im_q20);
-        mags_q20[i] = fxp_sat_u32_from_u64(fxp_sqrt64(re_sq + im_sq));
-        sum_q17 += (uint64_t)(mags_q20[i] >> 3);
+        mags_q20[i] = (uq12_20_t)fxp_sqrt64(re_sq + im_sq);
+        sum_q17 += (mags_q20[i] >> 3);
 
         uint64_t freq_q20 =
             (((uint64_t)i * (uint64_t)fs) << FXP_FRAC_AUDIO_FFT_FREQUENCIES) / (uint64_t)len;
-        freqs_q20[i] = fxp_sat_u32_from_u64(freq_q20);
+        freqs_q20[i] = (uq12_20_t)freq_q20;
     }
 
     audio_fft_view_t view = {
         .mags_q20 = mags_q20,
         .freqs_q20 = freqs_q20,
         .len = fft_len,
-        .sum_mags_q17 = fxp_sat_u32_from_u64(sum_q17),
+        .sum_mags_q17 = sum_q17,
     };
 
     _write_fft_features(features_selector, &view, feats_q16);
@@ -320,38 +317,38 @@ static uq0_16_t _psd_exp_q16_from_q11(q5_11_t x_q11)
     return fxp_sat_u16_from_u32(fxp_sat_u32_from_u64(out_q16));
 }
 
-static uint64_t _psd_simpson_step_q8(const uq21_11_t *x_q11, int16_t start, int16_t end)
+static uint32_t _psd_simpson_step_q8(const uq21_11_t *x_q11, int16_t start, int16_t end)
 {
     int n_intervals = (end - start) / 2;
     int16_t idx = start;
-    uint64_t sum_q8 = 0;
+    uint32_t sum_q8 = 0;
 
     for (int i = 0; i < n_intervals; i++) {
-        uint64_t x0_q8 = (uint64_t)(x_q11[idx] >> FXP_PSD_PROXY_TO_INT_SHIFT);
-        uint64_t x1_q8 = (uint64_t)(x_q11[idx + 1] >> FXP_PSD_PROXY_TO_INT_SHIFT);
-        uint64_t x2_q8 = (uint64_t)(x_q11[idx + 2] >> FXP_PSD_PROXY_TO_INT_SHIFT);
+        uint32_t x0_q8 = (uint32_t)(x_q11[idx] >> FXP_PSD_PROXY_TO_INT_SHIFT);
+        uint32_t x1_q8 = (uint32_t)(x_q11[idx + 1] >> FXP_PSD_PROXY_TO_INT_SHIFT);
+        uint32_t x2_q8 = (uint32_t)(x_q11[idx + 2] >> FXP_PSD_PROXY_TO_INT_SHIFT);
         sum_q8 += x0_q8 + (x1_q8 << 2) + x2_q8;
         idx += 2;
     }
 
-    return (sum_q8 + 1ULL) / 3ULL;
+    return (sum_q8 + 1U) / 3U;
 }
 
-static uint64_t _psd_simpson_q8(const uq21_11_t *x_q11, int16_t len)
+static uint32_t _psd_simpson_q8(const uq21_11_t *x_q11, int16_t len)
 {
-    if (!x_q11 || len <= 1) return 0ULL;
+    if (!x_q11 || len <= 1) return 0U;
 
     if ((len & 1) == 0) {
-        uint64_t val_q8 = (((uint64_t)(x_q11[len - 1] >> FXP_PSD_PROXY_TO_INT_SHIFT) +
-                            (uint64_t)(x_q11[len - 2] >> FXP_PSD_PROXY_TO_INT_SHIFT)) + 1ULL) >> 1;
-        uint64_t result_q8 = _psd_simpson_step_q8(x_q11, 0, len - 1);
+        uint32_t val_q8 = (((uint32_t)(x_q11[len - 1] >> FXP_PSD_PROXY_TO_INT_SHIFT) +
+                            (uint32_t)(x_q11[len - 2] >> FXP_PSD_PROXY_TO_INT_SHIFT)) + 1U) >> 1;
+        uint32_t result_q8 = _psd_simpson_step_q8(x_q11, 0, len - 1);
 
-        val_q8 += ((((uint64_t)(x_q11[0] >> FXP_PSD_PROXY_TO_INT_SHIFT) +
-                     (uint64_t)(x_q11[1] >> FXP_PSD_PROXY_TO_INT_SHIFT)) + 1ULL) >> 1);
+        val_q8 += ((((uint32_t)(x_q11[0] >> FXP_PSD_PROXY_TO_INT_SHIFT) +
+                     (uint32_t)(x_q11[1] >> FXP_PSD_PROXY_TO_INT_SHIFT)) + 1U) >> 1);
         result_q8 += _psd_simpson_step_q8(x_q11, 1, len);
 
-        val_q8 = (val_q8 + 1ULL) >> 1;
-        result_q8 = (result_q8 + 1ULL) >> 1;
+        val_q8 = (val_q8 + 1U) >> 1;
+        result_q8 = (result_q8 + 1U) >> 1;
         return result_q8 + val_q8;
     }
 
@@ -379,26 +376,27 @@ static uq0_16_t _flatness(const audio_psd_view_t *view)
 
     if (!view->proxy_q11) return 0;
 
-    int64_t sum_logs_q11 = 0;
-    uint64_t sum_proxy_q11 = 0;
+
+    int32_t sum_logs_q11 = 0;
+    uint32_t sum_proxy_q11 = 0;
 
     for (int16_t i = 0; i < view->len; i++) {
         uq21_11_t x_q11 = view->proxy_q11[i];
         if (x_q11 == 0U) x_q11 = 1U;
-        sum_logs_q11 += (int64_t)_psd_ln_proxy_q11(x_q11);
-        sum_proxy_q11 += (uint64_t)x_q11;
+        sum_logs_q11 += (int32_t)_psd_ln_proxy_q11(x_q11);
+        sum_proxy_q11 += (uint32_t)x_q11;
     }
 
-    if (sum_proxy_q11 == 0ULL) return 0;
+    if (sum_proxy_q11 == 0U) return 0;
 
-    int32_t mean_log_q11 = fxp_round_div_s64(sum_logs_q11, view->len);
-    uq21_11_t mean_proxy_q11 = fxp_sat_u32_from_u64((uint64_t)fxp_round_div_u64(sum_proxy_q11, (uint32_t)view->len));
+    int32_t mean_log_q11 = fxp_round_div_s32(sum_logs_q11, view->len);
+    uq21_11_t mean_proxy_q11 = fxp_round_div_u32(sum_proxy_q11, (uint32_t)view->len);
     if (mean_proxy_q11 == 0U) mean_proxy_q11 = 1U;
 
     q5_11_t log_mean_q11 = _psd_ln_proxy_q11(mean_proxy_q11);
     int32_t diff_q11 = mean_log_q11 - (int32_t)log_mean_q11;
     if (diff_q11 > 0) diff_q11 = 0;
-    return _psd_exp_q16_from_q11(fxp_sat_s16_from_s32(diff_q11));
+    return _psd_exp_q16_from_q11((q5_11_t)diff_q11);
 }
 
 static void _bandpowers(const audio_psd_view_t *view,
@@ -410,8 +408,8 @@ static void _bandpowers(const audio_psd_view_t *view,
 
     if (!view || !view->proxy_q11 || !view->freqs_q20 || !psd_selector || view->len <= 2) return;
 
-    uint64_t total_power_q8 = _psd_simpson_q8(view->proxy_q11, view->len);
-    if (total_power_q8 == 0ULL) return;
+    uint32_t total_power_q8 = _psd_simpson_q8(view->proxy_q11, view->len);
+    if (total_power_q8 == 0U) return;
 
     for (int8_t i = 0; i < N_PSD; i++) {
         if (!psd_selector[i]) continue;
@@ -441,9 +439,10 @@ static void _bandpowers(const audio_psd_view_t *view,
             continue;
         }
 
-        uint64_t band_power_q8 = _psd_simpson_q8(&view->proxy_q11[start_idx], n_bins);
-        uint64_t ratio_q16 = ((band_power_q8 << 16) + (total_power_q8 >> 1)) / total_power_q8;
-        band_powers_q16[i] = fxp_sat_u16_from_u32(fxp_sat_u32_from_u64(ratio_q16));
+        uint32_t band_power_q8 = _psd_simpson_q8(&view->proxy_q11[start_idx], n_bins);
+        uint32_t ratio_q16 = (uint32_t)((((uint64_t)band_power_q8 << 16) + (total_power_q8 >> 1)) /
+                                        total_power_q8);
+        band_powers_q16[i] = (uq0_16_t)ratio_q16;
     }
 }
 
@@ -515,7 +514,7 @@ void audio_psd_features(const int8_t *features_selector,
     fxp_psd_sig_t *sig_q = (fxp_psd_sig_t *)malloc((size_t)sig_len * sizeof(fxp_psd_sig_t));
     kiss_fft_scalar *timedata = (kiss_fft_scalar *)malloc((size_t)NPERSEG * sizeof(kiss_fft_scalar));
     kiss_fft_cpx *cx_out = (kiss_fft_cpx *)malloc((size_t)psd_len * sizeof(kiss_fft_cpx));
-    uint64_t *acc_power = (uint64_t *)malloc((size_t)psd_len * sizeof(uint64_t));
+    uint32_t *acc_power = (uint32_t *)malloc((size_t)psd_len * sizeof(uint32_t));
     uq21_11_t *proxy_q11 = (uq21_11_t *)malloc((size_t)psd_len * sizeof(uq21_11_t));
     uq12_20_t *freqs_q20 = (uq12_20_t *)malloc((size_t)psd_len * sizeof(uq12_20_t));
     kiss_fftr_cfg cfg = kiss_fftr_alloc(NPERSEG, 0, 0, 0);
@@ -534,27 +533,21 @@ void audio_psd_features(const int8_t *features_selector,
     for (int16_t i = 0; i < sig_len; i++) {
         sig_q[i] = _psd_to_sig_q(sig_q14[i]);
     }
-    memset(acc_power, 0, (size_t)psd_len * sizeof(uint64_t));
+    memset(acc_power, 0, (size_t)psd_len * sizeof(uint32_t));
 
     int16_t start = 0;
     for (int16_t step = 0; step < steps; step++) {
         if ((int32_t)start + NPERSEG > sig_len) break;
-
-        int64_t sum_qsig = 0;
+        int32_t sum_qsig = 0;
         for (int16_t i = 0; i < NPERSEG; i++) {
-            sum_qsig += (int64_t)sig_q[start + i];
+            sum_qsig += (int32_t)sig_q[start + i];
         }
-        int32_t mean_qsig = fxp_round_div_s64(sum_qsig, NPERSEG);
+        int32_t mean_qsig = fxp_round_div_s32(sum_qsig, NPERSEG);
 
         for (int16_t i = 0; i < NPERSEG; i++) {
             int32_t centered_qsig = (int32_t)sig_q[start + i] - mean_qsig;
             int64_t prod_qsig_w = (int64_t)centered_qsig * (int64_t)fxp_hann_window_q15[i];
-            int32_t win_qsig;
-            if (prod_qsig_w >= 0) {
-                win_qsig = (int32_t)((prod_qsig_w + (1LL << (FXP_HANN_FRAC_BITS - 1))) >> FXP_HANN_FRAC_BITS);
-            } else {
-                win_qsig = -(int32_t)(((-prod_qsig_w) + (1LL << (FXP_HANN_FRAC_BITS - 1))) >> FXP_HANN_FRAC_BITS);
-            }
+            int32_t win_qsig = _round_shift_s64_to_s32(prod_qsig_w, FXP_HANN_FRAC_BITS);
 
 #if (FIXED_POINT == 32)
             timedata[i] = (kiss_fft_scalar)win_qsig;
@@ -570,28 +563,24 @@ void audio_psd_features(const int8_t *features_selector,
                                                     FXP_FRAC_AUDIO_INPUT - 8U);
             int32_t im_q8 = _round_shift_s64_to_s32((int64_t)cx_out[i].i,
                                                     FXP_FRAC_AUDIO_INPUT - 8U);
+
             re_q8 = fxp_sat_s16_from_s32(re_q8);
             im_q8 = fxp_sat_s16_from_s32(im_q8);
+
             uint64_t raw_mag_sq_q16 = (uint64_t)((int64_t)re_q8 * (int64_t)re_q8) +
                                       (uint64_t)((int64_t)im_q8 * (int64_t)im_q8);
             if (i != 0 && i != (psd_len - 1)) {
-                raw_mag_sq_q16 = (raw_mag_sq_q16 > (UINT64_MAX >> 1U))
-                                     ? UINT64_MAX
-                                     : (raw_mag_sq_q16 << 1U);
+                raw_mag_sq_q16 <<= 1U;
             }
-            uint64_t power_q11 = _round_shift_u64_local(raw_mag_sq_q16, 5U);
-            if (UINT64_MAX - acc_power[i] < power_q11) {
-                acc_power[i] = UINT64_MAX;
-            } else {
-                acc_power[i] += power_q11;
-            }
+            uint32_t power_q11 = (uint32_t)_round_shift_u64_local(raw_mag_sq_q16, 5U);
+            acc_power[i] += power_q11;
         }
 
         start = (int16_t)(start + hop);
     }
 
     for (int16_t i = 0; i < psd_len; i++) {
-        proxy_q11[i] = fxp_sat_u32_from_u64(acc_power[i]);
+        proxy_q11[i] = (uq21_11_t)acc_power[i];
         uint64_t freq_q20 = (((uint64_t)i * (uint64_t)fs) << FXP_FRAC_AUDIO_FFT_FREQUENCIES) / (uint64_t)NPERSEG;
         freqs_q20[i] = fxp_sat_u32_from_u64(freq_q20);
     }
