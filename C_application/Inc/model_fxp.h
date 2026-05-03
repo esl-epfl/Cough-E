@@ -8,9 +8,6 @@
 #include <imu_model.h>
 #include <core/fxp_core.h>
 
-#include <audio_model_fxp_params.h>
-#include <imu_model_fxp_params.h>
-
 /*
  * Class thresholds mapped from probability space to score space:
  *   score = log(p / (1-p))

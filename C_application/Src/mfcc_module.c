@@ -15,10 +15,11 @@
 #include <audio_features.h>
 
 #include <kiss_fftr.h>
-#include <kissfft_bridge.h>
 
 #include <dct_lin.h>
 #include <range_analysis.h>
+
+#ifndef FXP_MODE
 
 // internal use function to compute the dct on a linear array
 void _dct_linear(float *x, int16_t len, float *y);
@@ -53,9 +54,6 @@ void stft(const float *x, int16_t len, int16_t n_frames, float *res){
     float *fft_res = (float*)malloc(FFT_RES_LEN * sizeof(float));
     float *fft_re = (float*)malloc(FFT_RES_LEN * sizeof(float));
     float *fft_im = (float*)malloc(FFT_RES_LEN * sizeof(float));
-#ifdef FIXED_POINT
-    kiss_fft_scalar *column_q = (kiss_fft_scalar*)malloc(N_FFT * sizeof(kiss_fft_scalar));
-#endif
 
     for(int16_t i=0; i<n_frames; i++){
 
@@ -69,18 +67,11 @@ void stft(const float *x, int16_t len, int16_t n_frames, float *res){
 
         RA_LOG_ARRAY("AUDIO_MEL", "stft", "windowed_frame", column, N_FFT);
 
-#ifdef FIXED_POINT
-        float signal_scale = 1.0f;
-        kissfft_bridge_convert_input(column, N_FFT, column_q, &signal_scale);
-        kiss_fftr(cfg, column_q, cx_out);
-        kissfft_bridge_spectrum_to_float(cx_out, N_FFT, signal_scale, fft_re, fft_im);
-#else
         kiss_fftr(cfg, column, cx_out);
         for(int16_t j=0; j<FFT_RES_LEN; j++){
             fft_re[j] = cx_out[j].r;
             fft_im[j] = cx_out[j].i;
         }
-#endif
 
 #ifdef RANGE_ANALYSIS
         RA_LOG_ARRAY("AUDIO_MEL", "stft", "re", fft_re, FFT_RES_LEN);
@@ -287,3 +278,5 @@ void entropy(float *spectrogram, int16_t n_rows, int16_t n_columns, float *res){
         RA_LOG_SCALAR("AUDIO_MEL", "entropy", "result", res[i]);
     }
 }
+
+#endif /* !FXP_MODE */
