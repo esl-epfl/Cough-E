@@ -1,3 +1,4 @@
+#include <limits.h>
 #include <stdio.h>
 #include <stdlib.h>
 
@@ -121,7 +122,7 @@ static q10_22_t _kurtosis_raw(const q11_5_t *sig, int16_t len)
         sum_x4 += fxp_mul_u64(c2, c2);
     }
 
-    /* sum_x4 is UQ16.20 and denom is UQ20.44; shift by 16 to land in the Q10.22 carrier. */
+    /* sum_x4 is UQ44.20 and denom is UQ20.44; shift by 16 to land in the Q10.22 carrier. */
     uint64_t denom_shifted = (uint64_t)denom >> 30U;
     if (denom_shifted == 0) return 0;
 
@@ -346,7 +347,8 @@ static void _run_raw_feature(const int8_t *features_selector,
         default:
             if (local >= APPROXIMATE_ZERO_CROSSING && local < Num_imu_feat_families) {
                 uint8_t idx = (uint8_t)(local - APPROXIMATE_ZERO_CROSSING);
-                int16_t azc = _azc_from_signal(sig->data.raw_data, sig->len, 16U, 1U, k_azc_eps_raw_q5[idx]);
+                int16_t azc = _azc_from_signal(sig->data.raw_data, sig->len, 16U, 1U,
+                                               k_azc_eps_raw_q5[idx]);
                 *out = fxp_q16_from_int((int32_t)azc);
             }
             (void)features_selector;
@@ -365,7 +367,8 @@ static void _run_l2a_feature(const imu_sig_view_t *sig, uint8_t local, fxp_q16_t
 
     if (local >= APPROXIMATE_ZERO_CROSSING && local < Num_imu_feat_families) {
         uint8_t idx = (uint8_t)(local - APPROXIMATE_ZERO_CROSSING);
-        int16_t azc = _azc_from_signal(sig->data.l2a_data, sig->len, 16U, 0U, k_azc_eps_l2a_q6[idx]);
+        int16_t azc = _azc_from_signal(sig->data.l2a_data, sig->len, 16U, 0U,
+                                       k_azc_eps_l2a_q6[idx]);
         *out = fxp_q16_from_int((int32_t)azc);
     }
 }
@@ -393,7 +396,8 @@ static void _run_l2g_feature(const imu_sig_view_t *sig, uint8_t local, fxp_q16_t
         default:
             if (local >= APPROXIMATE_ZERO_CROSSING && local < Num_imu_feat_families) {
                 uint8_t idx = (uint8_t)(local - APPROXIMATE_ZERO_CROSSING);
-                int16_t azc = _azc_from_signal(sig->data.l2g_data, sig->len, 16U, 0U, k_azc_eps_l2g_q11[idx]);
+                int16_t azc = _azc_from_signal(sig->data.l2g_data, sig->len, 16U, 0U,
+                                               k_azc_eps_l2g_q11[idx]);
                 *out = fxp_q16_from_int((int32_t)azc);
             }
             return;

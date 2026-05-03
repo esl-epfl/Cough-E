@@ -590,11 +590,9 @@ static int check_audio_selector_fxp(const int8_t *features_selector)
     static const uint16_t float_only_audio[] = {
         SPECTRAL_DECREASE,
         SPECTRAL_SLOPE,
-        SPECTRAL_CENTROID,
         SPECTRAL_SKEW,
         SPECTRAL_STD,
         SPECTRAL_ENTROPY,
-        ZERO_CROSSING_RATE,
         ROOT_MEANS_SQUARED,
     };
 
@@ -698,6 +696,32 @@ static void audio_crest_factor_q16_from_q14(const int8_t *features_selector,
         : 0;
 }
 
+static void audio_zcr_q16_from_q14(const int8_t *features_selector,
+                                   const int16_t *sig_q14,
+                                   int16_t len,
+                                   fxp_q16_t *feats_q16)
+{
+    if (!features_selector[ZERO_CROSSING_RATE] || len <= 1) return;
+
+    int64_t sum_q14 = 0;
+    for (int16_t i = 0; i < len; i++) {
+        sum_q14 += (int64_t)sig_q14[i];
+    }
+    int32_t mean_q14 = fxp_round_div_s64(sum_q14, len);
+
+    uint32_t crossings = 0;
+    int32_t prev = (int32_t)sig_q14[0] - mean_q14;
+    for (int16_t i = 1; i < len; i++) {
+        int32_t cur = (int32_t)sig_q14[i] - mean_q14;
+        if ((prev < 0 && cur > 0) || (prev > 0 && cur < 0)) crossings++;
+        prev = cur;
+    }
+
+    uint32_t denom = (uint32_t)(len - 1);
+    uint32_t zcr_q16 = (uint32_t)((((uint64_t)crossings) << FXP_PIPE_FRAC) + (denom >> 1U)) / denom;
+    feats_q16[ZERO_CROSSING_RATE] = fxp_q16_from_u32(zcr_q16, FXP_PIPE_FRAC);
+}
+
 void audio_features(const int8_t *features_selector,
                     const int16_t *sig_q14,
                     int16_t len,
@@ -710,6 +734,7 @@ void audio_features(const int8_t *features_selector,
     audio_fft_features(features_selector, sig_q14, len, fs, feats_q16);
     audio_psd_features(features_selector, sig_q14, len, fs, feats_q16);
     audio_mel_features(features_selector, sig_q14, len, feats_q16);
+    audio_zcr_q16_from_q14(features_selector, sig_q14, len, feats_q16);
     audio_crest_factor_q16_from_q14(features_selector, sig_q14, len, feats_q16);
 }
 
