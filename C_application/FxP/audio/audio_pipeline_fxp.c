@@ -626,7 +626,7 @@ static inline uint32_t _mel_uq_div_u64_q(uint64_t num, uint64_t den, uint8_t fra
 
         if (r >= (den - r)) {
             r = r - (den - r);
-            q |= 1ULL;
+            q |= 1U;
         } else {
             r += r;
         }
@@ -729,7 +729,7 @@ static uint16_t _mel_entropy_row_q14(const uint64_t *row_power,
     }
     if (row_sum == 0ULL) return 0;
 
-    int64_t entropy_q14 = 0;
+    int32_t entropy_q14 = 0;
     for (int16_t t = 0; t < n_frames; t++) {
         uint64_t term = fxp_round_shift_u64(row_power[t], pre_shift);
         if (term == 0ULL) continue;
@@ -740,7 +740,7 @@ static uint16_t _mel_entropy_row_q14(const uint64_t *row_power,
         int32_t ln_p_q9 = (int32_t)fxp_ln_u64_q9((uint64_t)p_q16) - FXP_MEL_LN_Q9_SCALE_P;
         if (ln_p_q9 > 0) ln_p_q9 = 0;
 
-        int64_t prod_q25 = (int64_t)p_q16 * (int64_t)(-ln_p_q9);
+        int32_t prod_q25 = (int32_t)p_q16 * (int32_t)(-ln_p_q9);
         entropy_q14 += (prod_q25 + (1LL << (FXP_MEL_ENTROPY_PROD_SHIFT - 1))) >> FXP_MEL_ENTROPY_PROD_SHIFT;
     }
 
@@ -887,14 +887,14 @@ void audio_mel_features(const int8_t *features_selector,
 
         int16_t mean_q9 = fxp_sat_s16_from_s32(fxp_round_div_s32(sum_db_q9, n_frames));
 
-        int64_t sum_sq_q18 = 0;
+        int32_t sum_sq_q18 = 0;
         for (int16_t f = 0; f < n_frames; f++) {
             int32_t d = (int32_t)mel_db_q9[(size_t)m * (size_t)n_frames + (size_t)f] - (int32_t)mean_q9;
-            sum_sq_q18 += (int64_t)d * (int64_t)d;
+            sum_sq_q18 += d * d;
         }
-        int64_t var_q18 = fxp_round_div_i64(sum_sq_q18, n_frames);
+        int32_t var_q18 = fxp_round_div_s32(sum_sq_q18, n_frames);
         if (var_q18 < 0) var_q18 = 0;
-        int16_t std_q9 = fxp_sat_s16_from_s32((int32_t)fxp_sqrt64((uint64_t)var_q18));
+        int16_t std_q9 = fxp_sat_s16_from_s32((int32_t)fxp_sqrt32((uint32_t)var_q18));
 
         uint16_t ent_q14 = _mel_entropy_row_q14(&mel_power[(size_t)m * (size_t)n_frames],
                                                 n_frames);
