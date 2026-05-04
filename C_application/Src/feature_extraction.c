@@ -26,11 +26,6 @@ int _ra_imu_active = 0;
 
 #ifndef FXP_MODE
 
-typedef struct {
-    float *data;
-    int16_t len;
-} imu_float_view_t;
-
 //////////////////////////////////////////////////////////////////////////////////
 /*                      Local functions declaration                             */
 //////////////////////////////////////////////////////////////////////////////////
@@ -116,17 +111,6 @@ void eepd_features(const int8_t *features_selector, const float *sig, int16_t le
 
 
 /**
-    Process one IMU signal, checks which features are required and computes them
-
-    @param *features_selector   :   one-hot vector for which features to extract
-    @param *sig                 :   signal to process
-    @param len                  :   length of the signal
-    @param *feats               :   array of extracted features
-*/
-void imu_signal_features(const int8_t *features_selector, float *sig, int16_t len, float *feats);
-
-
-/**
     This function triggers the feature extraction process for a specific IMU feature family.
     First it checks the the features has to be computed, by means of the features_selector array.
     Then it retrieves the proper data and it calls the feature extraction function.
@@ -161,30 +145,31 @@ int is_required(const int8_t *features_selector, uint16_t start_index, uint16_t 
 }
 
 static void imu_run_float_features(const int8_t *features_selector,
-                                   imu_float_view_t sig,
+                                   float *sig,
+                                   int16_t len,
                                    float *feats)
 {
     if (features_selector[LINE_LENGTH]) {
-        feats[LINE_LENGTH] = get_line_length(sig.data, sig.len);
+        feats[LINE_LENGTH] = get_line_length(sig, len);
     }
     if (features_selector[ZERO_CROSSING_RATE_IMU]) {
-        feats[ZERO_CROSSING_RATE_IMU] = compute_zrc(sig.data, sig.len);
+        feats[ZERO_CROSSING_RATE_IMU] = compute_zrc(sig, len);
     }
     if (features_selector[KURTOSIS]) {
-        feats[KURTOSIS] = get_kurtosis(sig.data, sig.len);
+        feats[KURTOSIS] = get_kurtosis(sig, len);
     }
     if (features_selector[ROOT_MEANS_SQUARED_IMU]) {
-        feats[ROOT_MEANS_SQUARED_IMU] = get_rms(sig.data, sig.len);
+        feats[ROOT_MEANS_SQUARED_IMU] = get_rms(sig, len);
     }
     if (features_selector[CREST_FACTOR_IMU]) {
-        float rms = get_rms(sig.data, sig.len);
-        feats[CREST_FACTOR_IMU] = (rms > 0.0f) ? (get_max(sig.data, sig.len) / rms) : 0.0f;
+        float rms = get_rms(sig, len);
+        feats[CREST_FACTOR_IMU] = (rms > 0.0f) ? (get_max(sig, len) / rms) : 0.0f;
     }
     for (uint8_t i = 0; i < N_AZC; i++) {
         uint8_t idx = (uint8_t)(APPROXIMATE_ZERO_CROSSING + i);
         if (features_selector[idx]) {
             float eps = EPSILON_START + (EPSILON_STEP * (float)i);
-            feats[idx] = (float)azc_computation(sig.data, sig.len, eps);
+            feats[idx] = (float)azc_computation(sig, len, eps);
         }
     }
 }
@@ -459,12 +444,6 @@ void eepd_features(const int8_t *features_selector, const float *sig, int16_t le
 }
 
 
-void imu_signal_features(const int8_t *features_selector, float *sig, int16_t len, float *feats){
-
-    imu_float_view_t s = { .data = sig, .len = len };
-    imu_run_float_features(features_selector, s, feats);
-}
-
 #ifdef RANGE_ANALYSIS
 static const char *_imu_signal_names[] = {
     "accel_x", "accel_y", "accel_z", "gyro_y", "gyro_p", "gyro_r"
@@ -484,8 +463,7 @@ void compute_imu_family(const int8_t *features_selector, const float signal[][Nu
         RA_LOG_ARRAY("IMU_RAW", "imu_features", _imu_signal_names[signal_idx], signal_samples, len);
 
         RA_SET_IMU_CTX("IMU_RAW");
-        imu_float_view_t s = { .data = signal_samples, .len = len };
-        imu_run_float_features(&features_selector[sig_feat_idx], s, &feats[sig_feat_idx]);
+        imu_run_float_features(&features_selector[sig_feat_idx], signal_samples, len, &feats[sig_feat_idx]);
         RA_CLEAR_IMU_CTX();
         free(signal_samples);
     }
@@ -555,8 +533,7 @@ void imu_features(const int8_t *features_selector, const float sig[][Num_IMU_sig
         combo_signal[i] = L2_norm(&sig[i][0], 3);
     }
     RA_IMU_LOG_ARRAY("imu_features", "sig_input", combo_signal, len);
-    imu_float_view_t s_accel = { .data = combo_signal, .len = len };
-    imu_run_float_features(&features_selector[ACCEL_COMBO], s_accel, &feats[ACCEL_COMBO]);
+    imu_run_float_features(&features_selector[ACCEL_COMBO], combo_signal, len, &feats[ACCEL_COMBO]);
     RA_CLEAR_IMU_CTX();
 
     RA_SET_IMU_CTX("IMU_L2_GYRO");
@@ -564,8 +541,7 @@ void imu_features(const int8_t *features_selector, const float sig[][Num_IMU_sig
         combo_signal[i] = L2_norm(&sig[i][3], 3);
     }
     RA_IMU_LOG_ARRAY("imu_features", "sig_input", combo_signal, len);
-    imu_float_view_t s_gyro = { .data = combo_signal, .len = len };
-    imu_run_float_features(&features_selector[GYRO_COMBO], s_gyro, &feats[GYRO_COMBO]);
+    imu_run_float_features(&features_selector[GYRO_COMBO], combo_signal, len, &feats[GYRO_COMBO]);
     RA_CLEAR_IMU_CTX();
 
     free(combo_signal);
