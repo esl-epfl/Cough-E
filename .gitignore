@@ -6,6 +6,10 @@ __pycache__/
 # C build
 C_application/build/
 
+# Local editor formatting
+.clang-format
+.vscode/*.json
+
 # Generated KissFFT twiddles
 C_application/kiss_fftr/twiddles_win08_fs8000_q15.h
 C_application/kiss_fftr/twiddles_win08_fs8000_q31.h

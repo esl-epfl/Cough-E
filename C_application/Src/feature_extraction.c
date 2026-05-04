@@ -754,8 +754,8 @@ static void imu_features_from_raw_fxp(const int8_t *features_selector,
     }
 
     for (int16_t i = 0; i < len; i++) {
-        combo_l2a[i] = imu_l2_norm_accel_from_raw(raw_fxp[i][0], raw_fxp[i][1], raw_fxp[i][2]);
-        combo_l2g[i] = imu_l2_norm_gyro_from_raw(raw_fxp[i][3], raw_fxp[i][4], raw_fxp[i][5]);
+        combo_l2a[i] = imu_l2a(raw_fxp[i][0], raw_fxp[i][1], raw_fxp[i][2]);
+        combo_l2g[i] = imu_l2g(raw_fxp[i][3], raw_fxp[i][4], raw_fxp[i][5]);
     }
 
     const int8_t axis_ids[Num_IMU_signals] = {

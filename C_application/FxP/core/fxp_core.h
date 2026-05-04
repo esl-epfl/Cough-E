@@ -43,20 +43,31 @@ typedef uint16_t uq10_6_t;
 typedef uint16_t uq13_3_t;
 typedef uint16_t uq11_5_t;
 typedef uint16_t uq0_16_t;
+typedef uint16_t uq6_10_t;
 
 /* 32-bit aliases */
 typedef int32_t  q12_20_t;
 typedef int32_t  q13_19_t;
 typedef int32_t  q10_22_t;
 typedef uint32_t uq10_22_t;
+typedef uint32_t uq13_19_t;
 typedef uint32_t uq12_20_t;
 typedef uint32_t uq15_17_t;
 typedef uint32_t uq11_21_t;
 typedef uint32_t uq17_15_t;
+typedef uint32_t uq20_12_t;
 typedef uint32_t uq21_11_t;
+typedef uint32_t uq22_10_t;
+typedef uint32_t uq23_9_t;
+typedef uint32_t uq25_7_t;
+typedef uint32_t uq26_6_t;
+typedef uint32_t uq14_18_t;
+
 
 /* 64-bit aliases */
 typedef uint64_t uq20_44_t;
+typedef uint64_t uq45_19_t;
+typedef uint64_t uq44_20_t;
 /* -------------------------------------------------------------------------- */
 /*  Saturating helpers                                                        */
 /* -------------------------------------------------------------------------- */
@@ -230,17 +241,19 @@ static inline int32_t fxp_abs_s32(int32_t x)
     if (x == INT32_MIN) return INT32_MAX;
     return x < 0 ? -x : x;
 }
-
-static inline uint16_t fxp_abs_delta_s16(int16_t a, int16_t b)
+//difference calculator for line length with raw values
+static inline uint16_t _abs_delta_raw(int16_t a, int16_t b)
 {
     return (a >= b)
         ? (uint16_t)((uint16_t)a - (uint16_t)b)
         : (uint16_t)((uint16_t)b - (uint16_t)a);
 }
-
-static inline uint16_t fxp_abs_delta_u16(uint16_t a, uint16_t b)
+//difference calculator for line length with l2g values
+static inline uint16_t _abs_delta_l2g(uint16_t a, uint16_t b)
 {
-    return (a >= b) ? (uint16_t)(a - b) : (uint16_t)(b - a);
+    return (a >= b)
+        ? (uint16_t)((uint16_t)a - (uint16_t)b)
+        : (uint16_t)((uint16_t)b - (uint16_t)a);
 }
 
 /* -------------------------------------------------------------------------- */

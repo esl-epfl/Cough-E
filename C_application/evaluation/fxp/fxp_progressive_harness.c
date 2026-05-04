@@ -291,8 +291,8 @@ static void apply_imu_block(progressive_block_t block,
 
     for (int16_t i = 0; i < len; i++) {
         for (int ax = 0; ax < Num_IMU_signals; ax++) raw_q5[i][ax] = FXP_IMU_RAW_FROM_FLOAT(sig[i][ax]);
-        l2a[i] = imu_l2_norm_accel_from_raw(raw_q5[i][0], raw_q5[i][1], raw_q5[i][2]);
-        l2g[i] = imu_l2_norm_gyro_from_raw(raw_q5[i][3], raw_q5[i][4], raw_q5[i][5]);
+        l2a[i] = imu_l2a(raw_q5[i][0], raw_q5[i][1], raw_q5[i][2]);
+        l2g[i] = imu_l2g(raw_q5[i][3], raw_q5[i][4], raw_q5[i][5]);
     }
 
     if (block == BLOCK_IMU_RAW || block == BLOCK_IMU_ALL) {
