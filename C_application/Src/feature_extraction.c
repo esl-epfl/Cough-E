@@ -606,65 +606,6 @@ static int check_audio_selector_fxp(const int8_t *features_selector)
     return 1;
 }
 
-static int imu_raw_feature_supported_fxp(uint16_t local_feat)
-{
-    if (local_feat == LINE_LENGTH) return 1;
-    if (local_feat == KURTOSIS) return 1;
-    if (local_feat == ROOT_MEANS_SQUARED_IMU) return 1;
-    if (local_feat >= APPROXIMATE_ZERO_CROSSING && local_feat < Num_imu_feat_families) return 1;
-    return 0;
-}
-
-static int imu_l2a_feature_supported_fxp(uint16_t local_feat)
-{
-    if (local_feat == ROOT_MEANS_SQUARED_IMU) return 1;
-    if (local_feat >= APPROXIMATE_ZERO_CROSSING && local_feat < Num_imu_feat_families) return 1;
-    return 0;
-}
-
-static int imu_l2g_feature_supported_fxp(uint16_t local_feat)
-{
-    if (local_feat == LINE_LENGTH) return 1;
-    if (local_feat == ROOT_MEANS_SQUARED_IMU) return 1;
-    if (local_feat == CREST_FACTOR_IMU) return 1;
-    if (local_feat >= APPROXIMATE_ZERO_CROSSING && local_feat < Num_imu_feat_families) return 1;
-    return 0;
-}
-
-static int check_imu_selector_fxp(const int8_t *features_selector)
-{
-    static const int8_t raw_bases[] = {
-        ACCEL_X_FEAT, ACCEL_Y_FEAT, ACCEL_Z_FEAT,
-        GYRO_Y_FEAT, GYRO_P_FEAT, GYRO_R_FEAT,
-    };
-
-    for (size_t s = 0; s < sizeof(raw_bases) / sizeof(raw_bases[0]); s++) {
-        uint16_t base = (uint16_t)raw_bases[s];
-        for (uint16_t local = 0; local < Num_imu_feat_families; local++) {
-            uint16_t idx = (uint16_t)(base + local);
-            if (features_selector[idx] == 1 && !imu_raw_feature_supported_fxp(local)) {
-                fprintf(stderr, "FXP IMU runtime: selected raw feature index %u is float-only.\n", (unsigned)idx);
-                return 0;
-            }
-        }
-    }
-
-    for (uint16_t local = 0; local < Num_imu_feat_families; local++) {
-        uint16_t idx_l2a = (uint16_t)(ACCEL_COMBO + local);
-        if (features_selector[idx_l2a] == 1 && !imu_l2a_feature_supported_fxp(local)) {
-            fprintf(stderr, "FXP IMU runtime: selected accel-combo feature index %u is float-only.\n", (unsigned)idx_l2a);
-            return 0;
-        }
-
-        uint16_t idx_l2g = (uint16_t)(GYRO_COMBO + local);
-        if (features_selector[idx_l2g] == 1 && !imu_l2g_feature_supported_fxp(local)) {
-            fprintf(stderr, "FXP IMU runtime: selected gyro-combo feature index %u is float-only.\n", (unsigned)idx_l2g);
-            return 0;
-        }
-    }
-    return 1;
-}
-
 static void audio_crest_factor_native_from_q14(const int8_t *features_selector,
                                                const int16_t *sig_q14,
                                                int16_t len,
@@ -738,11 +679,13 @@ void audio_features(const int8_t *features_selector,
     audio_crest_factor_native_from_q14(features_selector, sig_q14, len, feats);
 }
 
-static void imu_features_from_raw_fxp(const int8_t *features_selector,
-                                      const q11_5_t raw_fxp[][Num_IMU_signals],
-                                      int16_t len,
-                                      fxp_feat_t *feats)
+void imu_features(const int8_t *features_selector,
+                  const q11_5_t sig_raw[][Num_IMU_signals],
+                  int16_t len,
+                  fxp_feat_t *feats)
 {
+    if (!features_selector || !sig_raw || !feats || len <= 0) return;
+
     uq10_6_t *combo_l2a = (uq10_6_t *)malloc((size_t)len * sizeof(*combo_l2a));
     uq5_11_t *combo_l2g = (uq5_11_t *)malloc((size_t)len * sizeof(*combo_l2g));
     q11_5_t *axis_samples = (q11_5_t *)malloc((size_t)len * sizeof(*axis_samples));
@@ -754,8 +697,8 @@ static void imu_features_from_raw_fxp(const int8_t *features_selector,
     }
 
     for (int16_t i = 0; i < len; i++) {
-        combo_l2a[i] = imu_l2a(raw_fxp[i][0], raw_fxp[i][1], raw_fxp[i][2]);
-        combo_l2g[i] = imu_l2g(raw_fxp[i][3], raw_fxp[i][4], raw_fxp[i][5]);
+        combo_l2a[i] = imu_l2a(sig_raw[i][0], sig_raw[i][1], sig_raw[i][2]);
+        combo_l2g[i] = imu_l2g(sig_raw[i][3], sig_raw[i][4], sig_raw[i][5]);
     }
 
     const int8_t axis_ids[Num_IMU_signals] = {
@@ -772,35 +715,22 @@ static void imu_features_from_raw_fxp(const int8_t *features_selector,
         if (!fxp_is_required(features_selector, base, (uint16_t)(base + Num_imu_feat_families - 1))) continue;
 
         for (int16_t i = 0; i < len; i++) {
-            axis_samples[i] = raw_fxp[i][axis_ids[s]];
+            axis_samples[i] = sig_raw[i][axis_ids[s]];
         }
-        imu_sig_raw_t sig_raw = {.data = axis_samples, .len = len};
-        imu_run_features_native(&features_selector[base], imu_view_from_raw(sig_raw), &feats[base]);
+        imu_run_raw_features(&features_selector[base], axis_samples, len, &feats[base]);
     }
 
     if (fxp_is_required(features_selector, ACCEL_COMBO, (uint16_t)(ACCEL_COMBO + Num_imu_feat_families - 1))) {
-        imu_sig_l2a_t s_l2a = {.data = combo_l2a, .len = len};
-        imu_run_features_native(&features_selector[ACCEL_COMBO], imu_view_from_l2a(s_l2a), &feats[ACCEL_COMBO]);
+        imu_run_l2a_features(&features_selector[ACCEL_COMBO], combo_l2a, len, &feats[ACCEL_COMBO]);
     }
 
     if (fxp_is_required(features_selector, GYRO_COMBO, (uint16_t)(GYRO_COMBO + Num_imu_feat_families - 1))) {
-        imu_sig_l2g_t s_l2g = {.data = combo_l2g, .len = len};
-        imu_run_features_native(&features_selector[GYRO_COMBO], imu_view_from_l2g(s_l2g), &feats[GYRO_COMBO]);
+        imu_run_l2g_features(&features_selector[GYRO_COMBO], combo_l2g, len, &feats[GYRO_COMBO]);
     }
 
     free(combo_l2a);
     free(combo_l2g);
     free(axis_samples);
-}
-
-void imu_features(const int8_t *features_selector,
-                  const q11_5_t sig_raw[][Num_IMU_signals],
-                  int16_t len,
-                  fxp_feat_t *feats)
-{
-    if (!features_selector || !sig_raw || !feats || len <= 0) return;
-    if (!check_imu_selector_fxp(features_selector)) abort();
-    imu_features_from_raw_fxp(features_selector, sig_raw, len, feats);
 }
 
 #endif

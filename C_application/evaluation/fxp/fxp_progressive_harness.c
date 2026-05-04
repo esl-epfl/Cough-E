@@ -61,26 +61,6 @@ typedef enum {
     BLOCK_IMU_ALL,
 } progressive_block_t;
 
-typedef struct { q11_5_t *data; int16_t len; } prog_imu_sig_raw_t;
-typedef struct { uq10_6_t *data; int16_t len; } prog_imu_sig_l2a_t;
-typedef struct { uq5_11_t *data; int16_t len; } prog_imu_sig_l2g_t;
-
-typedef enum {
-    PROG_IMU_SIG_KIND_RAW = 0,
-    PROG_IMU_SIG_KIND_L2A,
-    PROG_IMU_SIG_KIND_L2G,
-} prog_imu_sig_kind_t;
-
-typedef struct {
-    prog_imu_sig_kind_t kind;
-    int16_t len;
-    union {
-        const q11_5_t *raw_data;
-        const uq10_6_t *l2a_data;
-        const uq5_11_t *l2g_data;
-    } data;
-} prog_imu_sig_view_t;
-
 extern void audio_fft_features(const int8_t *features_selector,
                                const int16_t *sig_q14,
                                int16_t len,
@@ -95,11 +75,20 @@ extern void audio_mel_features(const int8_t *features_selector,
                                const int16_t *sig_q14,
                                int16_t len,
                                fxp_feat_t *feats);
-extern void imu_run_features_native(const int8_t *features_selector,
-                                    prog_imu_sig_view_t sig,
-                                    fxp_feat_t *feats);
-extern uq10_6_t imu_l2_norm_accel_from_raw(q11_5_t ax, q11_5_t ay, q11_5_t az);
-extern uq5_11_t imu_l2_norm_gyro_from_raw(q11_5_t gx, q11_5_t gy, q11_5_t gz);
+extern void imu_run_raw_features(const int8_t *features_selector,
+                                 const q11_5_t *sig,
+                                 int16_t len,
+                                 fxp_feat_t *feats);
+extern void imu_run_l2a_features(const int8_t *features_selector,
+                                 const uq10_6_t *sig,
+                                 int16_t len,
+                                 fxp_feat_t *feats);
+extern void imu_run_l2g_features(const int8_t *features_selector,
+                                 const uq5_11_t *sig,
+                                 int16_t len,
+                                 fxp_feat_t *feats);
+extern uq10_6_t imu_l2a(q11_5_t ax, q11_5_t ay, q11_5_t az);
+extern uq5_11_t imu_l2g(q11_5_t gx, q11_5_t gy, q11_5_t gz);
 
 static int parse_block(const char *name, progressive_block_t *block)
 {
@@ -126,33 +115,6 @@ static int block_is_audio(progressive_block_t block)
 static int block_is_imu(progressive_block_t block)
 {
     return block == BLOCK_IMU_RAW || block == BLOCK_IMU_L2 || block == BLOCK_IMU_ALL;
-}
-
-static prog_imu_sig_view_t view_from_raw(prog_imu_sig_raw_t s)
-{
-    prog_imu_sig_view_t v;
-    v.kind = PROG_IMU_SIG_KIND_RAW;
-    v.len = s.len;
-    v.data.raw_data = s.data;
-    return v;
-}
-
-static prog_imu_sig_view_t view_from_l2a(prog_imu_sig_l2a_t s)
-{
-    prog_imu_sig_view_t v;
-    v.kind = PROG_IMU_SIG_KIND_L2A;
-    v.len = s.len;
-    v.data.l2a_data = s.data;
-    return v;
-}
-
-static prog_imu_sig_view_t view_from_l2g(prog_imu_sig_l2g_t s)
-{
-    prog_imu_sig_view_t v;
-    v.kind = PROG_IMU_SIG_KIND_L2G;
-    v.len = s.len;
-    v.data.l2g_data = s.data;
-    return v;
 }
 
 static int any_required(const int8_t *selector, uint16_t start, uint16_t end)
@@ -309,8 +271,7 @@ static void apply_imu_block(progressive_block_t block,
             if (!any_required(imu_features_selector, base, (uint16_t)(base + Num_imu_feat_families - 1))) continue;
             for (int16_t i = 0; i < len; i++) axis[i] = raw_q5[i][axes[s]];
             memset(local_feats, 0, sizeof(local_feats));
-            prog_imu_sig_raw_t raw = {.data = axis, .len = len};
-            imu_run_features_native(&imu_features_selector[base], view_from_raw(raw), local_feats);
+            imu_run_raw_features(&imu_features_selector[base], axis, len, local_feats);
             copy_imu_local(features, local_feats, base);
         }
     }
@@ -318,14 +279,12 @@ static void apply_imu_block(progressive_block_t block,
     if (block == BLOCK_IMU_L2 || block == BLOCK_IMU_ALL) {
         if (any_required(imu_features_selector, ACCEL_COMBO, (uint16_t)(ACCEL_COMBO + Num_imu_feat_families - 1))) {
             memset(local_feats, 0, sizeof(local_feats));
-            prog_imu_sig_l2a_t s_l2a = {.data = l2a, .len = len};
-            imu_run_features_native(&imu_features_selector[ACCEL_COMBO], view_from_l2a(s_l2a), local_feats);
+            imu_run_l2a_features(&imu_features_selector[ACCEL_COMBO], l2a, len, local_feats);
             copy_imu_local(features, local_feats, ACCEL_COMBO);
         }
         if (any_required(imu_features_selector, GYRO_COMBO, (uint16_t)(GYRO_COMBO + Num_imu_feat_families - 1))) {
             memset(local_feats, 0, sizeof(local_feats));
-            prog_imu_sig_l2g_t s_l2g = {.data = l2g, .len = len};
-            imu_run_features_native(&imu_features_selector[GYRO_COMBO], view_from_l2g(s_l2g), local_feats);
+            imu_run_l2g_features(&imu_features_selector[GYRO_COMBO], l2g, len, local_feats);
             copy_imu_local(features, local_feats, GYRO_COMBO);
         }
     }

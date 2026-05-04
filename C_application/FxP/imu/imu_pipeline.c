@@ -7,7 +7,7 @@
 #ifdef FXP_MODE
 
 /* -------------------------------------------------------------------------- */
-/*  FxP kernels                                                               */
+/*  FxP kernels : IMU                                                             */
 /* -------------------------------------------------------------------------- */
 
 #define FXP_KURT_FISHER_Q10_22 ((int32_t)3 << FXP_FRAC_IMU_KURTOSIS_RAW)
@@ -169,6 +169,7 @@ typedef struct {
     int16_t last;
 } azc_segment_t;
 
+//--------------- AZC Feature block start : no important qformats simply done to all be in FxP  -----------------------------
 static inline int32_t _azc_sample(const void *sig, int16_t idx, uint8_t is_signed)
 {
     return is_signed ? (int32_t)((const int16_t *)sig)[idx]
@@ -309,61 +310,63 @@ static int16_t _azc_from_signal(const void *sig, int16_t len,
 static const uint32_t k_azc_eps_raw_q5[8] = {10U, 13U, 16U, 19U, 22U, 26U, 29U, 32U};
 static const uint32_t k_azc_eps_l2a_q6[8] = {19U, 26U, 32U, 38U, 45U, 51U, 58U, 64U};
 static const uint32_t k_azc_eps_l2g_q11[8] = {614U, 819U, 1024U, 1229U, 1434U, 1638U, 1843U, 2048U};
+//--------------- AZC Feature block end -----------------------------
 
-static void _run_raw_feature(const int8_t *features_selector,
-                             const imu_sig_view_t *sig,
-                             uint8_t local,
-                             fxp_feat_t *out)
+//dispatch for features used by the raw signal input
+static void _run_raw_feature(const q11_5_t *sig, int16_t len, uint8_t local, fxp_feat_t *out)
 {
     switch (local) {
     case LINE_LENGTH:
-        *out = (fxp_feat_t)_line_length_raw(sig->data.raw_data, sig->len);
+        *out = (fxp_feat_t)_line_length_raw(sig, len);
         return;
     case KURTOSIS:
-        *out = (fxp_feat_t)_kurtosis(sig->data.raw_data, sig->len);
+        *out = (fxp_feat_t)_kurtosis(sig, len);
         return;
     case ROOT_MEANS_SQUARED_IMU:
-        *out = (fxp_feat_t)_rms_raw(sig->data.raw_data, sig->len);
+        *out = (fxp_feat_t)_rms_raw(sig, len);
         return;
     default:
         if (local >= APPROXIMATE_ZERO_CROSSING && local < Num_imu_feat_families) {
             uint8_t idx = (uint8_t)(local - APPROXIMATE_ZERO_CROSSING);
-                int16_t azc = _azc_from_signal(sig->data.raw_data, sig->len, 1U,
-                                               k_azc_eps_raw_q5[idx]);
+            int16_t azc = _azc_from_signal(sig, len, 1U, k_azc_eps_raw_q5[idx]);
             *out = (fxp_feat_t)azc;
+            return;
         }
-        (void)features_selector;
-        return;
+        fprintf(stderr, "FXP IMU runtime: unsupported raw feature %u.\n", (unsigned)local);
+        abort();
     }
 }
-
-static void _run_l2a_feature(const imu_sig_view_t *sig, uint8_t local, fxp_feat_t *out)
+//dispatch for features used by the l2a signal input
+static void _run_l2a_feature(const uq10_6_t *sig, int16_t len, uint8_t local, fxp_feat_t *out)
 {
     if (local == ROOT_MEANS_SQUARED_IMU) {
-        *out = (fxp_feat_t)_rms_l2a(sig->data.l2a_data, sig->len);
+        *out = (fxp_feat_t)_rms_l2a(sig, len);
         return;
     }
 
     if (local >= APPROXIMATE_ZERO_CROSSING && local < Num_imu_feat_families) {
         uint8_t idx = (uint8_t)(local - APPROXIMATE_ZERO_CROSSING);
-        int16_t azc = _azc_from_signal(sig->data.l2a_data, sig->len, 0U,
-                                       k_azc_eps_l2a_q6[idx]);
+        int16_t azc = _azc_from_signal(sig, len, 0U, k_azc_eps_l2a_q6[idx]);
         *out = (fxp_feat_t)azc;
+        return;
     }
-}
 
-static void _run_l2g_feature(const imu_sig_view_t *sig, uint8_t local, fxp_feat_t *out)
+    fprintf(stderr, "FXP IMU runtime: unsupported accel-combo feature %u.\n", (unsigned)local);
+    abort();
+}
+//dispatch for features used by the l2g signal input
+static void _run_l2g_feature(const uq5_11_t *sig, int16_t len, uint8_t local, fxp_feat_t *out)
 {
     switch (local) {
     case LINE_LENGTH:
-        *out = (fxp_feat_t)_line_length_l2g(sig->data.l2g_data, sig->len);
+        *out = (fxp_feat_t)_line_length_l2g(sig, len);
         return;
     case ROOT_MEANS_SQUARED_IMU:
-        *out = (fxp_feat_t)_rms_l2g(sig->data.l2g_data, sig->len);
+        *out = (fxp_feat_t)_rms_l2g(sig, len);
         return;
     case CREST_FACTOR_IMU: {
-        uq7_9_t rms = _rms_l2g(sig->data.l2g_data, sig->len);
-        uq5_11_t peak = _max_l2g(sig->data.l2g_data, sig->len);
+        uq7_9_t rms = _rms_l2g(sig, len);
+        uq5_11_t peak = _max_l2g(sig, len);
         uq2_14_t crest_factor = (rms > 0U) ? _crest_factor_l2g(peak, rms) : 0U;
         *out = (fxp_feat_t)crest_factor;
         return;
@@ -371,33 +374,45 @@ static void _run_l2g_feature(const imu_sig_view_t *sig, uint8_t local, fxp_feat_
     default:
         if (local >= APPROXIMATE_ZERO_CROSSING && local < Num_imu_feat_families) {
             uint8_t idx = (uint8_t)(local - APPROXIMATE_ZERO_CROSSING);
-                int16_t azc = _azc_from_signal(sig->data.l2g_data, sig->len, 0U,
-                                               k_azc_eps_l2g_q11[idx]);
+            int16_t azc = _azc_from_signal(sig, len, 0U, k_azc_eps_l2g_q11[idx]);
             *out = (fxp_feat_t)azc;
+            return;
         }
-        return;
+        fprintf(stderr, "FXP IMU runtime: unsupported gyro-combo feature %u.\n", (unsigned)local);
+        abort();
     }
 }
 
-void imu_run_features_native(const int8_t *features_selector, imu_sig_view_t sig, fxp_feat_t *feats)
+void imu_run_raw_features(const int8_t *features_selector,
+                          const q11_5_t *sig,
+                          int16_t len,
+                          fxp_feat_t *feats)
 {
     for (uint8_t local = 0U; local < Num_imu_feat_families; local++) {
         if (features_selector[local] != 1) continue;
+        _run_raw_feature(sig, len, local, &feats[local]);
+    }
+}
 
-        switch (sig.kind) {
-        case IMU_SIG_KIND_RAW:
-            _run_raw_feature(features_selector, &sig, local, &feats[local]);
-            break;
-        case IMU_SIG_KIND_L2A:
-            _run_l2a_feature(&sig, local, &feats[local]);
-            break;
-        case IMU_SIG_KIND_L2G:
-            _run_l2g_feature(&sig, local, &feats[local]);
-            break;
-        default:
-            fprintf(stderr, "IMU dispatch: unsupported signal kind %d.\n", (int)sig.kind);
-            abort();
-        }
+void imu_run_l2a_features(const int8_t *features_selector,
+                          const uq10_6_t *sig,
+                          int16_t len,
+                          fxp_feat_t *feats)
+{
+    for (uint8_t local = 0U; local < Num_imu_feat_families; local++) {
+        if (features_selector[local] != 1) continue;
+        _run_l2a_feature(sig, len, local, &feats[local]);
+    }
+}
+
+void imu_run_l2g_features(const int8_t *features_selector,
+                          const uq5_11_t *sig,
+                          int16_t len,
+                          fxp_feat_t *feats)
+{
+    for (uint8_t local = 0U; local < Num_imu_feat_families; local++) {
+        if (features_selector[local] != 1) continue;
+        _run_l2g_feature(sig, len, local, &feats[local]);
     }
 }
 #endif
