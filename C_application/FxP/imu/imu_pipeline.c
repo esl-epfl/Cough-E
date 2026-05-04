@@ -20,6 +20,10 @@ static inline uq2_14_t _crest_factor_l2g(uq5_11_t peak, uq7_9_t rms) {
     return (uq2_14_t)(((uint32_t)peak << 12) / (uint32_t)rms);
 }
 
+/* RMS helpers keep the sqrt input at an even number of fractional bits,
+ * so integer sqrt lands directly on the desired output Q format.
+ */
+
 // RMS for the RAW signal, input is Q11.5, output is UQ13.3.
 static uq13_3_t _rms_raw(const q11_5_t *sig, int16_t len) {
     if (len <= 0) return 0;
@@ -47,7 +51,7 @@ static uq13_3_t _rms_l2a(const uq10_6_t *sig, int16_t len) {
     uq26_6_t sqrt_input = (uq26_6_t)((sum / (uint16_t)len) >> 1U);
     return (uq13_3_t)fxp_sqrt32(sqrt_input);
 }
-// RMS for the L2G signal, input is UQ5.11, output is UQ13.3.
+// RMS for the L2G signal, input is UQ5.11, output is UQ7.9.
 static uq7_9_t _rms_l2g(const uq5_11_t *sig, int16_t len) {
     if (len <= 0) return 0;
 
@@ -80,20 +84,24 @@ static uq7_9_t _line_length_l2g(const uq5_11_t *sig, int16_t len) {
 
     uq7_9_t sum = 0;
     for (int16_t i = 0; i < len - 1; i++) {
+        // Absolute sample-to-sample difference, converted from UQ5.11 to UQ7.9.
         uq6_10_t diff = (uq6_10_t)_abs_delta_l2g(sig[i + 1], sig[i]) >> 1U;
         sum += (uq7_9_t)(diff >> 1U);
     }
 
     return (sum / (uint16_t)(len - 1));
 }
-// small helper for kurtosis to calculate the mean of the signal
 static inline q11_5_t _kurtosis_mean(q11_5_t sum, int16_t len) {
     if (len <= 0) return 0;
     return (q11_5_t)(sum / len);
 }
-// small helper for kurtosis to calculate the deviation value of the signal
+
 static inline q11_5_t _kurtosis_dev(q11_5_t sig, q11_5_t mean) { return (q11_5_t)(sig - mean); }
 
+/* Kurtosis is computed as sum(dev^4) / (len * stddev^4) - 3.
+ * The numerator and denominator use different Q formats, so the final
+ * division applies a net Q22 scaling before subtracting Fisher's 3.
+ */
 static q10_22_t _kurtosis(const q11_5_t *sig, int16_t len) {
     if (len <= 0) return 0;
 
@@ -169,7 +177,9 @@ typedef struct {
     int16_t last;
 } azc_segment_t;
 
-//--------------- AZC Feature block start : no important qformats simply done to all be in FxP  -----------------------------
+/* AZC uses fixed-point sample values only for distance comparisons.
+ * The returned feature is an integer count, so its fractional width is 0.
+ */
 static inline int32_t _azc_sample(const void *sig, int16_t idx, uint8_t is_signed)
 {
     return is_signed ? (int32_t)((const int16_t *)sig)[idx]
@@ -310,9 +320,8 @@ static int16_t _azc_from_signal(const void *sig, int16_t len,
 static const uint32_t k_azc_eps_raw_q5[8] = {10U, 13U, 16U, 19U, 22U, 26U, 29U, 32U};
 static const uint32_t k_azc_eps_l2a_q6[8] = {19U, 26U, 32U, 38U, 45U, 51U, 58U, 64U};
 static const uint32_t k_azc_eps_l2g_q11[8] = {614U, 819U, 1024U, 1229U, 1434U, 1638U, 1843U, 2048U};
-//--------------- AZC Feature block end -----------------------------
 
-//dispatch for features used by the raw signal input
+/* Per-signal feature dispatch. */
 static void _run_raw_feature(const q11_5_t *sig, int16_t len, uint8_t local, fxp_feat_t *out)
 {
     switch (local) {
@@ -336,7 +345,7 @@ static void _run_raw_feature(const q11_5_t *sig, int16_t len, uint8_t local, fxp
         abort();
     }
 }
-//dispatch for features used by the l2a signal input
+
 static void _run_l2a_feature(const uq10_6_t *sig, int16_t len, uint8_t local, fxp_feat_t *out)
 {
     if (local == ROOT_MEANS_SQUARED_IMU) {
@@ -354,7 +363,7 @@ static void _run_l2a_feature(const uq10_6_t *sig, int16_t len, uint8_t local, fx
     fprintf(stderr, "FXP IMU runtime: unsupported accel-combo feature %u.\n", (unsigned)local);
     abort();
 }
-//dispatch for features used by the l2g signal input
+
 static void _run_l2g_feature(const uq5_11_t *sig, int16_t len, uint8_t local, fxp_feat_t *out)
 {
     switch (local) {
