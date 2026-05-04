@@ -32,6 +32,12 @@ typedef struct {
 
 #define FXP_FFT_ROLLOFF_95_Q16 ((uint32_t)62259U)
 
+#if (FIXED_POINT == 32)
+#define FXP_FFT_INPUT_FRAC 30
+#else
+#define FXP_FFT_INPUT_FRAC FXP_FRAC_AUDIO_INPUT
+#endif
+
 
 static inline q13_19_t _dev(uq12_20_t freq_q20, uq11_21_t centroid_q21)
 {
@@ -99,9 +105,9 @@ static uq11_5_t _spread(const audio_fft_view_t *view, uq11_21_t centroid_q21)
         accum_q37_27 += (uint64_t)dev2_q25_7 * (uint64_t)view->mags_q20[i];
     }
 
-    uint32_t mean_q22_10 = (uint32_t)(accum_q37_27 + ((uint64_t)view->sum_mags_q17 >> 1U)) /
+    uint64_t mean_q22_10 = (accum_q37_27 + ((uint64_t)view->sum_mags_q17 >> 1U)) /
                            (uint64_t)view->sum_mags_q17;
-    return (uq11_5_t)fxp_sqrt32(mean_q22_10);
+    return (uq11_5_t)fxp_sqrt32(fxp_sat_u32_from_u64(mean_q22_10));
 }
 
 static uq17_15_t _kurtosis(const audio_fft_view_t *view,
@@ -117,10 +123,10 @@ static uq17_15_t _kurtosis(const audio_fft_view_t *view,
     for (int16_t i = 0; i < view->len; i++) {
         q13_19_t dev_q19 = _dev(view->freqs_q20[i], centroid_q21);
         int64_t norm_q39 = (int64_t)dev_q19 * (int64_t)inv_spread_q20;
-        int32_t norm_q11 = _round_shift_s64_to_s32(norm_q39, 28U);
+        int16_t norm_q11 = fxp_sat_s16_from_s32(_round_shift_s64_to_s32(norm_q39, 28U));
         uint32_t abs_norm_q11 = (norm_q11 < 0) ? (uint32_t)(-norm_q11)
                                                : (uint32_t)norm_q11;
-        uint32_t norm2_q22 = abs_norm_q11 * abs_norm_q11;
+        uint32_t norm2_q22 = (uint32_t)((uint64_t)abs_norm_q11 * (uint64_t)abs_norm_q11);
         uint32_t norm4_q12 = (uint32_t)(((uint64_t)norm2_q22 * norm2_q22 + (1ULL << 31)) >> 32);
         accum_q32 += (uint64_t)norm4_q12 * (uint64_t)view->mags_q20[i];
     }
@@ -168,10 +174,78 @@ static void _write_fft_features(const int8_t *features_selector,
     }
 }
 
+static inline kiss_fft_scalar _fft_from_input_q14(int16_t x_q14)
+{
+#if (FIXED_POINT == 32)
+    int64_t q = (int64_t)x_q14 << (FXP_FFT_INPUT_FRAC - FXP_FRAC_AUDIO_INPUT);
+    return (kiss_fft_scalar)fxp_sat_s32_from_s64(q);
+#else
+    return (kiss_fft_scalar)x_q14;
+#endif
+}
+
 static inline q12_20_t _fft_reim_q20(kiss_fft_scalar x)
 {
-    return fxp_sat_s32_from_s64((int64_t)x << (FXP_FRAC_AUDIO_FFT_RE_IM - FXP_FRAC_AUDIO_INPUT));
+#if (FXP_FFT_INPUT_FRAC > FXP_FRAC_AUDIO_FFT_RE_IM)
+    return (q12_20_t)_round_shift_s64_to_s32((int64_t)x,
+                                             FXP_FFT_INPUT_FRAC - FXP_FRAC_AUDIO_FFT_RE_IM);
+#else
+    return fxp_sat_s32_from_s64((int64_t)x << (FXP_FRAC_AUDIO_FFT_RE_IM - FXP_FFT_INPUT_FRAC));
+#endif
 }
+
+#if defined(FXP_STAGE_PROBES)
+int audio_fft_stage_probe(const int16_t *sig_q14,
+                          int16_t len,
+                          int16_t fs,
+                          uq12_20_t *mags_q20,
+                          uq12_20_t *freqs_q20,
+                          uq15_17_t *sum_mags_q17)
+{
+    if (!sig_q14 || !mags_q20 || !freqs_q20 || !sum_mags_q17 || len <= 0 || fs <= 0) return 0;
+
+    int16_t fft_len = (int16_t)((len / 2) + 1);
+    kiss_fftr_cfg cfg = kiss_fftr_alloc(len, 0, 0, 0);
+    if (!cfg) return 0;
+
+    kiss_fft_scalar *sig_q = (kiss_fft_scalar *)malloc((size_t)len * sizeof(kiss_fft_scalar));
+    kiss_fft_cpx *cx_out = (kiss_fft_cpx *)malloc((size_t)fft_len * sizeof(kiss_fft_cpx));
+
+    if (!sig_q || !cx_out) {
+        free(sig_q);
+        free(cx_out);
+        free(cfg);
+        return 0;
+    }
+
+    for (int16_t i = 0; i < len; i++) {
+        sig_q[i] = _fft_from_input_q14(sig_q14[i]);
+    }
+
+    kiss_fftr(cfg, sig_q, cx_out);
+
+    uint32_t sum_q17 = 0U;
+    for (int16_t i = 0; i < fft_len; i++) {
+        q12_20_t re_q20 = _fft_reim_q20(cx_out[i].r);
+        q12_20_t im_q20 = _fft_reim_q20(cx_out[i].i);
+        uint64_t re_sq = (uint64_t)((int64_t)re_q20 * (int64_t)re_q20);
+        uint64_t im_sq = (uint64_t)((int64_t)im_q20 * (int64_t)im_q20);
+        mags_q20[i] = (uq12_20_t)fxp_sqrt64(re_sq + im_sq);
+        sum_q17 += (mags_q20[i] >> 3);
+
+        uint64_t freq_q20 =
+            (((uint64_t)i * (uint64_t)fs) << FXP_FRAC_AUDIO_FFT_FREQUENCIES) / (uint64_t)len;
+        freqs_q20[i] = (uq12_20_t)freq_q20;
+    }
+
+    *sum_mags_q17 = (uq15_17_t)sum_q17;
+
+    free(sig_q);
+    free(cx_out);
+    free(cfg);
+    return 1;
+}
+#endif
 
 void audio_fft_features(const int8_t *features_selector,
                         const int16_t *sig_q14,
@@ -209,7 +283,7 @@ void audio_fft_features(const int8_t *features_selector,
     }
 
     for (int16_t i = 0; i < len; i++) {
-        sig_q[i] = (kiss_fft_scalar)sig_q14[i];
+        sig_q[i] = _fft_from_input_q14(sig_q14[i]);
     }
 
     kiss_fftr(cfg, sig_q, cx_out);
@@ -919,5 +993,189 @@ void audio_mel_features(const int8_t *features_selector,
     free(mel_db_q9);
     free(cfg);
 }
+
+#if defined(FXP_STAGE_PROBES)
+void audio_mel_stage_probe_free(audio_mel_stage_probe_t *probe)
+{
+    if (!probe) return;
+    free(probe->frame_power);
+    free(probe->mel_power);
+    free(probe->mel_db_q9);
+    probe->frame_power = NULL;
+    probe->mel_power = NULL;
+    probe->mel_db_q9 = NULL;
+}
+
+int audio_mel_stage_probe(const int8_t *features_selector,
+                          const int16_t *sig_q14,
+                          int16_t len,
+                          audio_mel_stage_probe_t *probe)
+{
+    if (!features_selector || !sig_q14 || !probe || len <= 0) return 0;
+
+    memset(probe, 0, sizeof(*probe));
+    if (!_mel_any_required(features_selector)) return 0;
+    if (len <= PAD_LEN) return 0;
+
+    int16_t n_mels_needed = 0;
+    for (uint8_t i = 0; i < N_MFCC; i++) {
+        if (features_selector[MEL_FREQUENCY_CEPSTRAL_COEFFICIENT + i] ||
+            features_selector[MEL_FREQUENCY_CEPSTRAL_COEFFICIENT + N_MFCC + i] ||
+            features_selector[MEL_FREQUENCY_CEPSTRAL_COEFFICIENT + (2 * N_MFCC) + i] ||
+            features_selector[MEL_FREQUENCY_CEPSTRAL_COEFFICIENT + (3 * N_MFCC) + i]) {
+            probe->idxs_needed[n_mels_needed] = i;
+            n_mels_needed++;
+        }
+    }
+    if (n_mels_needed <= 0) return 0;
+
+    int16_t padded_len = (int16_t)(len + (2 * PAD_LEN));
+    int16_t n_frames = (int16_t)(((padded_len - N_FFT) / HOP_LEN) + 1);
+    if (n_frames <= 0) return 0;
+
+    probe->n_frames = n_frames;
+    probe->n_mels = n_mels_needed;
+    probe->frame_power = (uint64_t *)malloc((size_t)n_frames * (size_t)FFT_RES_LEN * sizeof(uint64_t));
+    probe->mel_power = (uint64_t *)malloc((size_t)n_mels_needed * (size_t)n_frames * sizeof(uint64_t));
+    probe->mel_db_q9 = (int16_t *)malloc((size_t)n_mels_needed * (size_t)n_frames * sizeof(int16_t));
+
+    fxp_mel_sig_t *sig_q = (fxp_mel_sig_t *)malloc((size_t)len * sizeof(fxp_mel_sig_t));
+    fxp_mel_sig_t *padded_q = (fxp_mel_sig_t *)malloc((size_t)padded_len * sizeof(fxp_mel_sig_t));
+    kiss_fft_scalar *timedata = (kiss_fft_scalar *)malloc((size_t)N_FFT * sizeof(kiss_fft_scalar));
+    kiss_fft_cpx *cx_out = (kiss_fft_cpx *)malloc((size_t)FFT_RES_LEN * sizeof(kiss_fft_cpx));
+    kiss_fftr_cfg cfg = kiss_fftr_alloc(N_FFT, 0, 0, 0);
+
+    if (!probe->frame_power || !probe->mel_power || !probe->mel_db_q9 ||
+        !sig_q || !padded_q || !timedata || !cx_out || !cfg) {
+        audio_mel_stage_probe_free(probe);
+        free(sig_q);
+        free(padded_q);
+        free(timedata);
+        free(cx_out);
+        free(cfg);
+        memset(probe, 0, sizeof(*probe));
+        return 0;
+    }
+
+    _mel_ensure_kiss_ref();
+
+    int32_t ln_ref_q9 = fxp_ln_u64_q9((uint64_t)_kiss_ref_abs);
+    int32_t kiss_ref_offset_q9 =
+        -((int32_t)((((int64_t)ln_ref_q9 * (int64_t)FXP_MEL_20DB_PER_LN_Q20) + (1LL << 19)) >> 20));
+    int32_t db_offset_base_q9 =
+        kiss_ref_offset_q9 - ((int32_t)FXP_MEL_ACC_EXTRA_FRAC * FXP_MEL_DB_PER_POWER_BIT_Q9);
+    probe->stft_db_offset_q9 = kiss_ref_offset_q9;
+    probe->mel_db_offset_q9 = db_offset_base_q9;
+
+    for (int16_t i = 0; i < len; i++) {
+        sig_q[i] = _mel_from_input_q14(sig_q14[i]);
+    }
+
+    for (int16_t i = 0; i < PAD_LEN; i++) {
+        padded_q[i] = sig_q[PAD_LEN - i];
+        padded_q[PAD_LEN + len + i] = sig_q[len - 2 - i];
+    }
+    for (int16_t i = 0; i < len; i++) {
+        padded_q[PAD_LEN + i] = sig_q[i];
+    }
+
+    int16_t max_db_q9 = INT16_MIN;
+    for (int16_t f = 0; f < n_frames; f++) {
+        int32_t frame_start = (int32_t)f * HOP_LEN;
+
+        for (int16_t n = 0; n < N_FFT; n++) {
+            int32_t centered_q = (int32_t)padded_q[frame_start + n];
+            int64_t prod = (int64_t)centered_q * (int64_t)fxp_mfcc_hann_q15[n];
+            int32_t win_q;
+            if (prod >= 0) {
+                win_q = (int32_t)((prod + (1LL << (FXP_MEL_WIN_FRAC - 1))) >> FXP_MEL_WIN_FRAC);
+            } else {
+                win_q = -(int32_t)(((-prod) + (1LL << (FXP_MEL_WIN_FRAC - 1))) >> FXP_MEL_WIN_FRAC);
+            }
+
+#if (FIXED_POINT == 32)
+            timedata[n] = (kiss_fft_scalar)win_q;
+#else
+            timedata[n] = (kiss_fft_scalar)fxp_sat_s16_from_s32(win_q);
+#endif
+        }
+
+        kiss_fftr(cfg, timedata, cx_out);
+
+        uint64_t *frame = &probe->frame_power[(size_t)f * (size_t)FFT_RES_LEN];
+        for (int16_t k = 0; k < FFT_RES_LEN; k++) {
+            int64_t re = (int64_t)cx_out[k].r;
+            int64_t im = (int64_t)cx_out[k].i;
+            frame[k] = (uint64_t)(re * re) + (uint64_t)(im * im);
+        }
+
+        for (int16_t m = 0; m < n_mels_needed; m++) {
+            int16_t mel_idx = (int16_t)probe->idxs_needed[m];
+            int16_t start = fxp_mel_nz_indexes[mel_idx][0];
+            int16_t end = fxp_mel_nz_indexes[mel_idx][1];
+
+            uint64_t sum = 0ULL;
+            for (int16_t k = start; k <= end; k++) {
+                uint16_t w_q15 = fxp_mel_basis_q15[mel_idx][k - start];
+                uint64_t term = fxp_round_shift_u64(frame[k] * (uint64_t)w_q15,
+                                                    FXP_MEL_ACC_SHIFT);
+                if (UINT64_MAX - sum < term) {
+                    sum = UINT64_MAX;
+                } else {
+                    sum += term;
+                }
+            }
+
+            size_t idx = (size_t)m * (size_t)n_frames + (size_t)f;
+            probe->mel_power[idx] = sum;
+            probe->mel_db_q9[idx] = _mel_db_from_power_q9(sum, db_offset_base_q9);
+            if (probe->mel_db_q9[idx] > max_db_q9) {
+                max_db_q9 = probe->mel_db_q9[idx];
+            }
+        }
+    }
+
+    int16_t clip_floor_q9 = fxp_sat_s16_from_s32((int32_t)max_db_q9 - FXP_MEL_TOP_DB_Q9);
+
+    for (int16_t m = 0; m < n_mels_needed; m++) {
+        int32_t sum_db_q9 = 0;
+        int16_t row_max_q9 = INT16_MIN;
+
+        for (int16_t f = 0; f < n_frames; f++) {
+            size_t idx = (size_t)m * (size_t)n_frames + (size_t)f;
+            int16_t v = probe->mel_db_q9[idx];
+            if (v < clip_floor_q9) v = clip_floor_q9;
+            probe->mel_db_q9[idx] = v;
+            sum_db_q9 += (int32_t)v;
+            if (v > row_max_q9) row_max_q9 = v;
+        }
+
+        int16_t mean_q9 = fxp_sat_s16_from_s32(fxp_round_div_s32(sum_db_q9, n_frames));
+
+        int32_t sum_sq_q18 = 0;
+        for (int16_t f = 0; f < n_frames; f++) {
+            int32_t d = (int32_t)probe->mel_db_q9[(size_t)m * (size_t)n_frames + (size_t)f] - (int32_t)mean_q9;
+            sum_sq_q18 += d * d;
+        }
+        int32_t var_q18 = fxp_round_div_s32(sum_sq_q18, n_frames);
+        if (var_q18 < 0) var_q18 = 0;
+
+        uint8_t mel_bin = probe->idxs_needed[m];
+        probe->mean_q9[mel_bin] = mean_q9;
+        probe->std_q9[mel_bin] = fxp_sat_s16_from_s32((int32_t)fxp_sqrt32((uint32_t)var_q18));
+        probe->max_q9[mel_bin] = row_max_q9;
+        probe->entropy_q14[mel_bin] =
+            _mel_entropy_row_q14(&probe->mel_power[(size_t)m * (size_t)n_frames],
+                                 n_frames);
+    }
+
+    free(sig_q);
+    free(padded_q);
+    free(timedata);
+    free(cx_out);
+    free(cfg);
+    return 1;
+}
+#endif
 
 #endif

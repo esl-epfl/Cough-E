@@ -16,6 +16,7 @@
 
 #include <audio_features.h>
 #include <audio_model.h>
+#include <audio/audio_pipeline_fxp.h>
 #include <azc.h>
 #include <core/fxp_core.h>
 #define audio_features fxp_audio_features
@@ -28,6 +29,7 @@
 #include <imu/imu_pipeline.h>
 #include <imu_features.h>
 #include <imu_model.h>
+#include <mfcc_module.h>
 #include <time_domain_feat.h>
 
 #include "fxp_metrics.h"
@@ -334,6 +336,267 @@ static void add_metric(named_metric_t *table,
     if (slot >= 0) fxp_metric_add(&table[slot].acc, ref, fxp);
 }
 
+static float audio_feat_to_float(fxp_feat_t value, uint16_t feature_idx);
+static float imu_feat_to_float(fxp_feat_t value, uint16_t feature_idx);
+
+static void add_audio_fft_kernel_metrics(named_metric_t *table,
+                                         int *count,
+                                         const int8_t *selector,
+                                         const float *sig,
+                                         const int16_t *sig_q14,
+                                         int16_t len,
+                                         int16_t fs)
+{
+    int need_rolloff = selector[SPECTRAL_ROLLOFF];
+    int need_centroid = selector[SPECTRAL_CENTROID] ||
+                        selector[SPECTRAL_SPREAD] ||
+                        selector[SPECTRAL_KURTOSIS];
+    int need_spread = selector[SPECTRAL_SPREAD] ||
+                      selector[SPECTRAL_KURTOSIS];
+    int need_kurt = selector[SPECTRAL_KURTOSIS];
+    if (!need_rolloff && !need_centroid && !need_spread && !need_kurt) return;
+
+    int16_t fft_len = (int16_t)((len / 2) + 1);
+    float *mags = (float *)malloc((size_t)fft_len * sizeof(float));
+    float *freqs = (float *)malloc((size_t)fft_len * sizeof(float));
+    uq12_20_t *fxp_mags_q20 = (uq12_20_t *)malloc((size_t)fft_len * sizeof(uq12_20_t));
+    uq12_20_t *fxp_freqs_q20 = (uq12_20_t *)malloc((size_t)fft_len * sizeof(uq12_20_t));
+    fxp_feat_t fxp_feats[Number_AUDIO_Features];
+    if (!mags || !freqs || !fxp_mags_q20 || !fxp_freqs_q20) {
+        free(mags);
+        free(freqs);
+        free(fxp_mags_q20);
+        free(fxp_freqs_q20);
+        return;
+    }
+
+    memset(fxp_feats, 0, sizeof(fxp_feats));
+
+    float sum_mags = 0.0f;
+    compute_rfft(sig, len, fs, mags, freqs, &sum_mags);
+    uq15_17_t fxp_sum_q17 = 0;
+    int have_fxp_fft = audio_fft_stage_probe(sig_q14, len, fs,
+                                             fxp_mags_q20,
+                                             fxp_freqs_q20,
+                                             &fxp_sum_q17);
+
+    int8_t probe_selector[Number_AUDIO_Features] = {0};
+    if (need_rolloff) probe_selector[SPECTRAL_ROLLOFF] = 1;
+    if (need_centroid) probe_selector[SPECTRAL_CENTROID] = 1;
+    if (need_spread) probe_selector[SPECTRAL_SPREAD] = 1;
+    if (need_kurt) probe_selector[SPECTRAL_KURTOSIS] = 1;
+    audio_fft_features(probe_selector, sig_q14, len, fs, fxp_feats);
+
+    if (have_fxp_fft) {
+        float fxp_sum = FXP_TO_FLOAT(fxp_sum_q17, 17);
+        float mag_scale = (fxp_sum > 0.0f) ? (sum_mags / fxp_sum) : 0.0f;
+        for (int16_t i = 0; i < fft_len; i++) {
+            add_metric(table, count, "compute_rfft",
+                       mags[i],
+                       FXP_TO_FLOAT(fxp_mags_q20[i], 20) * mag_scale);
+        }
+    }
+
+    if (sum_mags > 0.0f) {
+        float centroid = need_centroid ? compute_centroid(mags, freqs, fft_len, sum_mags) : 0.0f;
+        float spread = need_spread ? compute_spread(mags, freqs, fft_len, sum_mags, centroid) : 0.0f;
+
+        if (need_rolloff) {
+            float ref = compute_rolloff(mags, freqs, fft_len, sum_mags);
+            float fxp = audio_feat_to_float(fxp_feats[SPECTRAL_ROLLOFF], SPECTRAL_ROLLOFF);
+            add_metric(table, count, "compute_rolloff", ref, fxp);
+        }
+        if (need_centroid) {
+            float fxp = audio_feat_to_float(fxp_feats[SPECTRAL_CENTROID], SPECTRAL_CENTROID);
+            add_metric(table, count, "compute_centroid", centroid, fxp);
+        }
+        if (need_spread) {
+            float fxp = audio_feat_to_float(fxp_feats[SPECTRAL_SPREAD], SPECTRAL_SPREAD);
+            add_metric(table, count, "compute_spread", spread, fxp);
+        }
+        if (need_kurt) {
+            float ref = compute_kurt(mags, freqs, fft_len, sum_mags, centroid, spread);
+            float fxp = audio_feat_to_float(fxp_feats[SPECTRAL_KURTOSIS], SPECTRAL_KURTOSIS);
+            add_metric(table, count, "compute_kurt", ref, fxp);
+        }
+    }
+
+    free(mags);
+    free(freqs);
+    free(fxp_mags_q20);
+    free(fxp_freqs_q20);
+}
+
+static float mel_power_db_from_probe(uint64_t power, int32_t offset_q9)
+{
+    double p = (power == 0ULL) ? 1.0 : (double)power;
+    return (float)((10.0 * log10(p)) + FXP_TO_FLOAT(offset_q9, 9));
+}
+
+static int audio_mel_feature_selected(const int8_t *selector)
+{
+    for (uint16_t i = MEL_FREQUENCY_CEPSTRAL_COEFFICIENT;
+         i < MEL_FREQUENCY_CEPSTRAL_COEFFICIENT + (N_MFCC * N_MFCC_FAMILIES);
+         i++) {
+        if (selector[i]) return 1;
+    }
+    return 0;
+}
+
+static void add_audio_mel_kernel_metrics(named_metric_t *table,
+                                         int *count,
+                                         const int8_t *selector,
+                                         const float *sig,
+                                         const int16_t *sig_q14,
+                                         int16_t len)
+{
+    if (!audio_mel_feature_selected(selector)) return;
+
+    audio_mel_stage_probe_t probe;
+    if (!audio_mel_stage_probe(selector, sig_q14, len, &probe)) return;
+
+    int16_t n_frames = probe.n_frames;
+    size_t frame_count = (size_t)n_frames * (size_t)FFT_RES_LEN;
+    size_t mel_count = (size_t)probe.n_mels * (size_t)n_frames;
+
+    float *ref_frame_power = (float *)malloc(frame_count * sizeof(float));
+    float *ref_mel_power = (float *)malloc(mel_count * sizeof(float));
+    float *ref_mel_db = (float *)malloc(mel_count * sizeof(float));
+    float *ref_mean = (float *)malloc((size_t)probe.n_mels * sizeof(float));
+    float *ref_std = (float *)malloc((size_t)probe.n_mels * sizeof(float));
+    float *ref_max = (float *)malloc((size_t)probe.n_mels * sizeof(float));
+    float *ref_entropy = (float *)malloc((size_t)probe.n_mels * sizeof(float));
+
+    if (!ref_frame_power || !ref_mel_power || !ref_mel_db ||
+        !ref_mean || !ref_std || !ref_max || !ref_entropy) {
+        free(ref_frame_power);
+        free(ref_mel_power);
+        free(ref_mel_db);
+        free(ref_mean);
+        free(ref_std);
+        free(ref_max);
+        free(ref_entropy);
+        audio_mel_stage_probe_free(&probe);
+        return;
+    }
+
+    memset(ref_mel_power, 0, mel_count * sizeof(float));
+
+    stft(sig, len, n_frames, ref_frame_power);
+    mel_spectrogram(sig, len, n_frames, probe.idxs_needed, ref_mel_power);
+    power_to_dB(ref_mel_power, (int16_t)mel_count, ref_mel_db);
+
+    float *entropy_input = (float *)malloc(mel_count * sizeof(float));
+    if (entropy_input) {
+        memcpy(entropy_input, ref_mel_power, mel_count * sizeof(float));
+        entropy(entropy_input, probe.n_mels, n_frames, ref_entropy);
+        free(entropy_input);
+    } else {
+        memset(ref_entropy, 0, (size_t)probe.n_mels * sizeof(float));
+    }
+
+    for (size_t i = 0; i < frame_count; i++) {
+        float ref = (ref_frame_power[i] > 0.0f) ? (10.0f * log10f(ref_frame_power[i])) : (10.0f * log10f(F_MIN));
+        float fxp = mel_power_db_from_probe(probe.frame_power[i], probe.stft_db_offset_q9);
+        add_metric(table, count, "stft", ref, fxp);
+    }
+
+    for (size_t i = 0; i < mel_count; i++) {
+        float ref = (ref_mel_power[i] > 0.0f) ? (10.0f * log10f(ref_mel_power[i])) : (10.0f * log10f(F_MIN));
+        float fxp_preclip = mel_power_db_from_probe(probe.mel_power[i], probe.mel_db_offset_q9);
+        add_metric(table, count, "mel_spectrogram", ref, fxp_preclip);
+        add_metric(table, count, "power_to_dB", ref_mel_db[i], FXP_TO_FLOAT(probe.mel_db_q9[i], 9));
+    }
+
+    for (int16_t m = 0; m < probe.n_mels; m++) {
+        uint8_t mel_bin = probe.idxs_needed[m];
+        ref_mean[m] = vect_mean(&ref_mel_db[(size_t)m * (size_t)n_frames], n_frames);
+        ref_std[m] = vect_std(&ref_mel_db[(size_t)m * (size_t)n_frames], n_frames);
+        ref_max[m] = vect_max_value(&ref_mel_db[(size_t)m * (size_t)n_frames], n_frames);
+
+        if (selector[MEL_FREQUENCY_CEPSTRAL_COEFFICIENT + mel_bin]) {
+            add_metric(table, count, "feature_aggregation",
+                       ref_mean[m],
+                       FXP_TO_FLOAT(probe.mean_q9[mel_bin], 9));
+        }
+        if (selector[MEL_FREQUENCY_CEPSTRAL_COEFFICIENT + N_MFCC + mel_bin]) {
+            add_metric(table, count, "feature_aggregation",
+                       ref_std[m],
+                       FXP_TO_FLOAT(probe.std_q9[mel_bin], 9));
+        }
+        if (selector[MEL_FREQUENCY_CEPSTRAL_COEFFICIENT + (2 * N_MFCC) + mel_bin]) {
+            add_metric(table, count, "feature_aggregation",
+                       ref_max[m],
+                       FXP_TO_FLOAT(probe.max_q9[mel_bin], 9));
+        }
+        if (selector[MEL_FREQUENCY_CEPSTRAL_COEFFICIENT + (3 * N_MFCC) + mel_bin]) {
+            add_metric(table, count, "entropy",
+                       ref_entropy[m],
+                       FXP_TO_FLOAT(probe.entropy_q14[mel_bin], 14));
+        }
+    }
+
+    free(ref_frame_power);
+    free(ref_mel_power);
+    free(ref_mel_db);
+    free(ref_mean);
+    free(ref_std);
+    free(ref_max);
+    free(ref_entropy);
+    audio_mel_stage_probe_free(&probe);
+}
+
+static void add_audio_scalar_kernel_metrics(named_metric_t *table,
+                                           int *count,
+                                           const int8_t *selector,
+                                           const float *sig,
+                                           const int16_t *sig_q14,
+                                           int16_t len)
+{
+    int need_rms = selector[ROOT_MEANS_SQUARED] || selector[CREST_FACTOR];
+    int need_max = selector[CREST_FACTOR];
+    if (!need_rms && !need_max) return;
+
+    float *centered = (float *)malloc((size_t)len * sizeof(float));
+    if (!centered) return;
+
+    sub_mean(sig, centered, len);
+    float ref_rms = get_rms(centered, len);
+    float ref_max = need_max ? get_max(centered, len) : 0.0f;
+    float ref_crest = (ref_rms > 0.0f) ? (ref_max / ref_rms) : 0.0f;
+
+    int64_t sum_q14 = 0;
+    for (int16_t i = 0; i < len; i++) {
+        sum_q14 += (int64_t)sig_q14[i];
+    }
+
+    int32_t mean_q14 = (sum_q14 >= 0)
+        ? (int32_t)((sum_q14 + (len / 2)) / len)
+        : (int32_t)(-(((-sum_q14) + (len / 2)) / len));
+
+    int32_t max_q14 = (int32_t)sig_q14[0] - mean_q14;
+    uint64_t sum_sq_q28 = 0;
+    for (int16_t i = 0; i < len; i++) {
+        int32_t cur = (int32_t)sig_q14[i] - mean_q14;
+        if (cur > max_q14) max_q14 = cur;
+        sum_sq_q28 += (uint64_t)((int64_t)cur * (int64_t)cur);
+    }
+
+    uint64_t mean_sq_q28 = (sum_sq_q28 + ((uint64_t)len >> 1U)) / (uint64_t)len;
+    int32_t rms_q14 = (int32_t)fxp_sat_u32_from_u64(fxp_sqrt64(mean_sq_q28));
+    int32_t crest_q16 = (rms_q14 > 0) ? fxp_div_s32(max_q14, rms_q14, FXP_PIPE_FRAC) : 0;
+
+    if (need_rms) {
+        add_metric(table, count, "audio_get_rms", ref_rms, FXP_TO_FLOAT(rms_q14, FXP_FRAC_AUDIO_INPUT));
+    }
+    if (need_max) {
+        add_metric(table, count, "audio_get_max", ref_max, FXP_TO_FLOAT(max_q14, FXP_FRAC_AUDIO_INPUT));
+        add_metric(table, count, "audio_crest_factor", ref_crest, FXP_TO_FLOAT(crest_q16, FXP_PIPE_FRAC));
+    }
+
+    free(centered);
+}
+
 static void add_audio_kernel_errors(named_metric_t *table,
                                     int *count,
                                     int feature_idx,
@@ -342,19 +605,11 @@ static void add_audio_kernel_errors(named_metric_t *table,
 {
     switch (feature_idx) {
         case SPECTRAL_ROLLOFF:
-            add_metric(table, count, "compute_rfft", ref, fxp);
-            add_metric(table, count, "compute_rolloff", ref, fxp);
             return;
+        case SPECTRAL_CENTROID:
         case SPECTRAL_SPREAD:
-            add_metric(table, count, "compute_rfft", ref, fxp);
-            add_metric(table, count, "compute_centroid", ref, fxp);
-            add_metric(table, count, "compute_spread", ref, fxp);
             return;
         case SPECTRAL_KURTOSIS:
-            add_metric(table, count, "compute_rfft", ref, fxp);
-            add_metric(table, count, "compute_centroid", ref, fxp);
-            add_metric(table, count, "compute_spread", ref, fxp);
-            add_metric(table, count, "compute_kurt", ref, fxp);
             return;
         case SPECTRAL_FLATNESS:
             add_metric(table, count, "compute_periodogram", ref, fxp);
@@ -364,10 +619,8 @@ static void add_audio_kernel_errors(named_metric_t *table,
             add_metric(table, count, "compute_periodogram", ref, fxp);
             add_metric(table, count, "get_dominant_freq", ref, fxp);
             return;
+        case ROOT_MEANS_SQUARED:
         case CREST_FACTOR:
-            add_metric(table, count, "audio_get_rms", ref, fxp);
-            add_metric(table, count, "audio_get_max", ref, fxp);
-            add_metric(table, count, "audio_crest_factor", ref, fxp);
             return;
         default:
             break;
@@ -381,20 +634,10 @@ static void add_audio_kernel_errors(named_metric_t *table,
     }
 
     if (feature_idx >= MEL_FREQUENCY_CEPSTRAL_COEFFICIENT &&
-        feature_idx < MEL_FREQUENCY_CEPSTRAL_COEFFICIENT + (3 * N_MFCC)) {
-        add_metric(table, count, "stft", ref, fxp);
-        add_metric(table, count, "mel_spectrogram", ref, fxp);
-        add_metric(table, count, "power_to_dB", ref, fxp);
-        add_metric(table, count, "feature_aggregation", ref, fxp);
-        return;
-    }
-
-    if (feature_idx >= MEL_FREQUENCY_CEPSTRAL_COEFFICIENT + (3 * N_MFCC) &&
         feature_idx < MEL_FREQUENCY_CEPSTRAL_COEFFICIENT + (4 * N_MFCC)) {
-        add_metric(table, count, "stft", ref, fxp);
-        add_metric(table, count, "mel_spectrogram", ref, fxp);
-        add_metric(table, count, "entropy", ref, fxp);
-        add_metric(table, count, "feature_aggregation", ref, fxp);
+        (void)ref;
+        (void)fxp;
+        return;
     }
 }
 
@@ -481,6 +724,22 @@ int main(void)
 
         compute_audio_float_features(audio_features_selector, sig, WINDOW_SAMP_AUDIO, AUDIO_FS, audio_ref_feats);
         fxp_audio_features(audio_features_selector, audio_q14, WINDOW_SAMP_AUDIO, AUDIO_FS, audio_fxp_feats);
+        add_audio_fft_kernel_metrics(audio_table, &audio_n,
+                                     audio_features_selector,
+                                     sig,
+                                     audio_q14,
+                                     WINDOW_SAMP_AUDIO,
+                                     AUDIO_FS);
+        add_audio_scalar_kernel_metrics(audio_table, &audio_n,
+                                        audio_features_selector,
+                                        sig,
+                                        audio_q14,
+                                        WINDOW_SAMP_AUDIO);
+        add_audio_mel_kernel_metrics(audio_table, &audio_n,
+                                     audio_features_selector,
+                                     sig,
+                                     audio_q14,
+                                     WINDOW_SAMP_AUDIO);
 
         for (int i = 0; i < Number_AUDIO_Features; i++) {
             if (!audio_features_selector[i]) continue;
