@@ -37,7 +37,7 @@
 #if !defined(FXP_MODE) || !defined(FIXED_POINT)
 int main(void)
 {
-    fprintf(stderr, "fxp_stage_harness requires -DFXP_MODE and -DFIXED_POINT=16 or 32.\n");
+    fprintf(stderr, "fxp_stage_harness requires -DFXP_MODE and -DFIXED_POINT=32.\n");
     return 1;
 }
 #else

@@ -12,7 +12,7 @@ Pipeline per recording:
 Usage:
     python C_application/evaluation/evaluate.py
     python C_application/evaluation/evaluate.py --mode fxp
-    python C_application/evaluation/evaluate.py --mode fxp --twiddle 16
+    python C_application/evaluation/evaluate.py --mode fxp --twiddle 32
     python C_application/evaluation/evaluate.py --mode fxp-error
 """
 
@@ -868,8 +868,8 @@ def main(argv=None):
     )
     parser.add_argument("--mode", choices=["float", "fxp", "fxp-error"], default="float",
                         help="float / fxp ML metrics, or fxp-error for kernel-level FxP-vs-float error metrics")
-    parser.add_argument("--twiddle", type=int, choices=[16, 32], default=32,
-                        help="KissFFT twiddle precision (used in fxp / fxp-error modes)")
+    parser.add_argument("--twiddle", type=int, choices=[32], default=32,
+                        help="KissFFT twiddle precision (FxP audio uses 32-bit KissFFT)")
     parser.add_argument("--fxp-block", choices=FXP_BLOCKS,
                         help="run mixed float/FxP ML metrics with only this feature block replaced by FxP outputs")
 

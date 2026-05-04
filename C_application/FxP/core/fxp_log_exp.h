@@ -563,36 +563,63 @@ static inline int16_t fxp_ln_u64_q9(uint64_t x)
     return fxp_sat_s16_from_s32((int32_t)((ln_x_q24 + (1LL << 14)) >> 15));
 }
 
-/* Natural exponential on Q11 input, result in UQ0.16. */
-static inline uint16_t fxp_exp_uq0_16_from_q11(int16_t x_q11)
+/* Natural logarithm for PSD proxy values.
+ * Input is UQ21.11 and output is kept in 32-bit Q21.11.
+ */
+static inline q21_11_t _log_psd(uq21_11_t x)
 {
-    int64_t x_q24 = (int64_t)x_q11 * (int64_t)(1U << 13);
-    int32_t k = fxp_floor_div_s64(x_q24, FXP_LN2_Q24);
-    int64_t rem_q24 = x_q24 - (int64_t)k * (int64_t)FXP_LN2_Q24;
-    if (rem_q24 < 0) rem_q24 = 0;
+    if (x == 0U) x = 1U;
 
-    uint32_t z_q24 = (uint32_t)(((uint64_t)rem_q24 << 24) / (uint32_t)FXP_LN2_Q24);
-    if (z_q24 >= (1U << 24)) {
-        z_q24 = (1U << 24) - 1U;
+    uint32_t msb = 31U - (uint32_t)__builtin_clz(x);
+    uint32_t base = (uint32_t)1U << msb;
+    uint32_t frac = (uint32_t)((((uint64_t)(x - base)) << 24) / (uint64_t)base);
+
+    uint32_t idx = frac >> 16;
+    if (idx >= FXP_LN_LUT_SIZE) idx = FXP_LN_LUT_SIZE - 1;
+    uint32_t alpha = frac & 0xFFFFU;
+
+    int32_t y0 = fxp_ln_lut_q24[idx];
+    int32_t y1 = fxp_ln_lut_q24[idx + 1];
+    int32_t y = y0 + (int32_t)((((int64_t)(y1 - y0) * (int64_t)alpha) + (1LL << 15)) >> 16);
+
+    int32_t exponent = (int32_t)msb - FXP_FRAC_AUDIO_PSD_PROXY;
+    int64_t log = (int64_t)exponent * (int64_t)FXP_LN2_Q24 + (int64_t)y;
+    return (q21_11_t)(log >> 13);
+}
+
+/* Natural exponential for PSD flatness.
+ * Input is Q5.11 and output is UQ0.16.
+ */
+static inline uq0_16_t _exp_psd(q5_11_t x)
+{
+    int64_t input = (int64_t)x << 13;
+    int32_t exponent = fxp_floor_div_s64(input, FXP_LN2_Q24);
+    int64_t remainder = input - (int64_t)exponent * (int64_t)FXP_LN2_Q24;
+    if (remainder < 0) remainder = 0;
+
+    uint32_t frac = (uint32_t)(((uint64_t)remainder << 24) / (uint32_t)FXP_LN2_Q24);
+    if (frac >= (1U << 24)) {
+        frac = (1U << 24) - 1U;
     }
 
-    uint32_t idx = z_q24 >> 16;
-    uint32_t alpha = z_q24 & 0xFFFFU;
+    uint32_t idx = frac >> 16;
+    uint32_t alpha = frac & 0xFFFFU;
 
     uint32_t y0 = fxp_exp_lut_q24[idx];
     uint32_t y1 = fxp_exp_lut_q24[idx + 1];
-    uint32_t er_q24 = y0 + (uint32_t)((((int64_t)((int32_t)y1 - (int32_t)y0) * (int64_t)alpha) + (1LL << 15)) >> 16);
-    uint32_t er_q16 = (er_q24 + (1U << 7)) >> 8;
+    uint32_t exp = y0 + (uint32_t)((((int64_t)((int32_t)y1 - (int32_t)y0) *
+                                      (int64_t)alpha) + (1LL << 15)) >> 16);
+    uint32_t result = (exp + (1U << 7)) >> 8;
 
-    uint64_t out_q16;
-    if (k >= 0) {
-        if (k >= 16) return UINT16_MAX;
-        out_q16 = ((uint64_t)er_q16) << (uint32_t)k;
+    uint64_t output;
+    if (exponent >= 0) {
+        if (exponent >= 16) return UINT16_MAX;
+        output = ((uint64_t)result) << (uint32_t)exponent;
     } else {
-        uint32_t shift = (uint32_t)(-k);
-        if (shift >= 32) out_q16 = 0;
-        else out_q16 = (((uint64_t)er_q16) + ((uint64_t)1U << (shift - 1U))) >> shift;
+        uint32_t shift = (uint32_t)(-exponent);
+        if (shift >= 32) output = 0;
+        else output = (((uint64_t)result) + ((uint64_t)1U << (shift - 1U))) >> shift;
     }
 
-    return fxp_sat_u16_from_u32(fxp_sat_u32_from_u64(out_q16));
+    return (uq0_16_t)output;
 }

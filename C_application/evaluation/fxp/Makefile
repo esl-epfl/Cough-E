@@ -16,7 +16,7 @@ FXP_CORE_HEADER = $(ROOT)/FxP/core/fxp_core.h
 
 TARGET_STAGE = fxp_stage_harness
 TARGET_PROGRESSIVE = fxp_progressive_harness
-FFT_MODE     ?= -DFIXED_POINT=16
+FFT_MODE     ?= -DFIXED_POINT=32
 HEADER_FLAGS ?=
 BUILD_TAG    ?= default
 OBJDIR       = .build/$(BUILD_TAG)
