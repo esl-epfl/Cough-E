@@ -13,7 +13,13 @@ THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS" AND 
 */
 
 // #include "twiddles.h"
-#include "twiddles_win08_fs8000.h"
+#if defined(FIXED_POINT) && (FIXED_POINT == 32)
+#  include "twiddles_win08_fs8000_q31.h"   /* int32_t Q1.31 twiddles */
+#elif defined(FIXED_POINT)
+#  include "twiddles_win08_fs8000_q15.h"   /* int16_t Q1.15 twiddles */
+#else
+#  include "twiddles_win08_fs8000.h"       /* float twiddles */
+#endif
 #include "kiss_fftr.h"
 #include "_kiss_fft_guts.h"
 

@@ -19,25 +19,22 @@
 #include <dct_lin.h>
 #include <range_analysis.h>
 
-// This function is internally used to avoid the helper module
-// the need of importing the kiss_fft library 
-void _cmplx_mag(kiss_fft_cpx *x, int16_t len, float *res);
+#ifndef FXP_MODE
 
 // internal use function to compute the dct on a linear array
 void _dct_linear(float *x, int16_t len, float *y);
 
 /*
-    Computes the complex magnitude of the input RFFT result and put
-    it inside res array
-*/
+ * Parked helper kept for the upcoming full FxP audio port.
+ * It is intentionally disabled in the current mixed float/FxP bridge flow.
+ */
+#if 0
 void _cmplx_mag(kiss_fft_cpx *x, int16_t len, float *res){
-
     for(int16_t i=0; i<len; i++){
         res[i] = sqrtf((x[i].r * x[i].r) + (x[i].i * x[i].i));
     }
 }
-
-
+#endif
 
 void stft(const float *x, int16_t len, int16_t n_frames, float *res){
 
@@ -50,46 +47,40 @@ void stft(const float *x, int16_t len, int16_t n_frames, float *res){
     reflect_padding(x, len, PAD_LEN, padded);
 
     float *column = (float*)malloc(N_FFT * sizeof(float));
-    float *fft_res = (float*)malloc(FFT_RES_LEN * sizeof(float));
 
     // initialize RFFT structures
     kiss_fftr_cfg cfg = kiss_fftr_alloc(N_FFT, 0, 0, 0);
-    kiss_fft_cpx *cx_out = (kiss_fft_cpx*)malloc(N_FFT *sizeof(kiss_fft_cpx));
+    kiss_fft_cpx *cx_out = (kiss_fft_cpx*)malloc(FFT_RES_LEN * sizeof(kiss_fft_cpx));
+    float *fft_res = (float*)malloc(FFT_RES_LEN * sizeof(float));
+    float *fft_re = (float*)malloc(FFT_RES_LEN * sizeof(float));
+    float *fft_im = (float*)malloc(FFT_RES_LEN * sizeof(float));
 
     for(int16_t i=0; i<n_frames; i++){
 
         // get the i-th column of the padded input (i.e. i-th frame)
-        // Basically the framing is considered to produce a matrix, each
-        // column is a frame to process. It's done like this in order to
-        // be compliant with the python code
         for(int16_t j=0; j<N_FFT; j++){
             column[j] = padded[j + (i*HOP_LEN)];
         }
 
-        // apply the window
+        // apply the Hann window
         vect_mult(column, hann_mfcc_wind, N_FFT, column);
 
         RA_LOG_ARRAY("AUDIO_MEL", "stft", "windowed_frame", column, N_FFT);
 
         kiss_fftr(cfg, column, cx_out);
+        for(int16_t j=0; j<FFT_RES_LEN; j++){
+            fft_re[j] = cx_out[j].r;
+            fft_im[j] = cx_out[j].i;
+        }
 
 #ifdef RANGE_ANALYSIS
-        // Log re and im separately for range analysis
-        {
-            float *re_tmp = (float*)malloc(FFT_RES_LEN * sizeof(float));
-            float *im_tmp = (float*)malloc(FFT_RES_LEN * sizeof(float));
-            for(int16_t j=0; j<FFT_RES_LEN; j++){
-                re_tmp[j] = cx_out[j].r;
-                im_tmp[j] = cx_out[j].i;
-            }
-            RA_LOG_ARRAY("AUDIO_MEL", "stft", "re", re_tmp, FFT_RES_LEN);
-            RA_LOG_ARRAY("AUDIO_MEL", "stft", "im", im_tmp, FFT_RES_LEN);
-            free(re_tmp);
-            free(im_tmp);
-        }
+        RA_LOG_ARRAY("AUDIO_MEL", "stft", "re", fft_re, FFT_RES_LEN);
+        RA_LOG_ARRAY("AUDIO_MEL", "stft", "im", fft_im, FFT_RES_LEN);
 #endif
 
-        _cmplx_mag(cx_out, FFT_RES_LEN, column);
+        for(int16_t j=0; j<FFT_RES_LEN; j++){
+            column[j] = sqrtf((fft_re[j] * fft_re[j]) + (fft_im[j] * fft_im[j]));
+        }
         RA_LOG_ARRAY("AUDIO_MEL", "stft", "cmplx_mag", column, FFT_RES_LEN);
 
         vect_mult(column, column, FFT_RES_LEN, column); // element-wise power of 2
@@ -102,7 +93,6 @@ void stft(const float *x, int16_t len, int16_t n_frames, float *res){
         for(int16_t j=0; j<FFT_RES_LEN; j++){
             res[(i * FFT_RES_LEN) + j] = column[j];
         }
-
     }
 
     free(cfg);
@@ -110,6 +100,11 @@ void stft(const float *x, int16_t len, int16_t n_frames, float *res){
     free(padded);
     free(column);
     free(fft_res);
+    free(fft_re);
+    free(fft_im);
+#ifdef FIXED_POINT
+    free(column_q);
+#endif
 }
 
 
@@ -283,3 +278,5 @@ void entropy(float *spectrogram, int16_t n_rows, int16_t n_columns, float *res){
         RA_LOG_SCALAR("AUDIO_MEL", "entropy", "result", res[i]);
     }
 }
+
+#endif /* !FXP_MODE */

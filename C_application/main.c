@@ -11,199 +11,213 @@
 #include <imu_features.h>
 #include <postprocessing.h>
 
+#ifdef FXP_MODE
+#include <core/fxp_core.h>
+typedef fxp_q16_t score_t;
+#define SCORE_THRESHOLD_AUDIO ((score_t)FXP_AUDIO_SCORE_TH_Q16)
+#define SCORE_THRESHOLD_IMU ((score_t)FXP_IMU_SCORE_TH_Q16)
+#else
+typedef feat_t score_t;
+#define SCORE_THRESHOLD_AUDIO ((score_t)AUDIO_TH)
+#define SCORE_THRESHOLD_IMU ((score_t)IMU_TH)
+#endif
 
+static inline uint8_t is_cough(score_t score, score_t threshold)
+{
+    return (score >= threshold) ? 1U : 0U;
+}
 
-int main(){
-
-    // These two arrays contain the indexes of the features that are going to be extracted
-    int16_t *indexes_audio_f = (int16_t*)malloc(N_AUDIO_FEATURES * sizeof(int16_t));
-    int8_t *indexes_imu_f = (int8_t*)malloc(N_IMU_FEATURES * sizeof(int8_t));
+int main(void)
+{
+    int16_t *indexes_audio_f = (int16_t *)malloc((size_t)N_AUDIO_FEATURES * sizeof(int16_t));
+    int8_t *indexes_imu_f = (int8_t *)malloc((size_t)N_IMU_FEATURES * sizeof(int8_t));
 
     int16_t idx = 0;
-    for(int16_t i=0; i<Number_AUDIO_Features; i++){
-        if(audio_features_selector[i] == 1){
+    for (int16_t i = 0; i < Number_AUDIO_Features; i++) {
+        if (audio_features_selector[i] == 1) {
             indexes_audio_f[idx] = i;
             idx++;
         }
     }
     idx = 0;
-    for(int8_t i=0; i<Number_IMU_Features; i++){
-        if(imu_features_selector[i] == 1){
+    for (int8_t i = 0; i < Number_IMU_Features; i++) {
+        if (imu_features_selector[i] == 1) {
             indexes_imu_f[idx] = i;
             idx++;
         }
     }
 
-    ////    AUDIO FEATURES    ////
-    // Array for containing the audio features values. The order is the same as of the
-    // features families enum
-    float  *audio_feature_array = (float*)malloc(Number_AUDIO_Features * sizeof(float));
-    memset(audio_feature_array, 0.0, Number_AUDIO_Features);
+    feat_t *audio_feature_array = (feat_t *)malloc((size_t)Number_AUDIO_Features * sizeof(feat_t));
+    memset(audio_feature_array, 0, (size_t)Number_AUDIO_Features * sizeof(feat_t));
 
+    feat_t *imu_feature_array = (feat_t *)malloc((size_t)Number_IMU_Features * sizeof(feat_t));
+    memset(imu_feature_array, 0, (size_t)Number_IMU_Features * sizeof(feat_t));
 
-    ////    IMU FEATURES    ////
-    float *imu_feature_array = (float*)malloc(Number_IMU_Features * sizeof(float)); // To store all the possible IMU features
-    memset(imu_feature_array, 0.0, Number_IMU_Features);
+    feat_t *features_audio_model = (feat_t *)malloc((size_t)TOT_FEATURES_AUDIO_MODEL_AUDIO * sizeof(feat_t));
+    feat_t *features_imu_model = (feat_t *)malloc((size_t)TOT_FEATURES_IMU_MODEL_IMU * sizeof(feat_t));
 
-    // Array for the features set of the audio model
-    float* features_audio_model = (float*)malloc(TOT_FEATURES_AUDIO_MODEL_AUDIO * sizeof(float));
+    score_t audio_score = 0;
+    score_t imu_score = 0;
 
-    float audio_proba = 0.0;
+    uint16_t *starts = (uint16_t *)malloc((size_t)MAX_PEAKS_EXPECTED * sizeof(uint16_t));
+    uint16_t *ends = (uint16_t *)malloc((size_t)MAX_PEAKS_EXPECTED * sizeof(uint16_t));
+    uint16_t *locs = (uint16_t *)malloc((size_t)MAX_PEAKS_EXPECTED * sizeof(uint16_t));
+    postproc_peak_t *peaks = (postproc_peak_t *)malloc((size_t)MAX_PEAKS_EXPECTED * sizeof(postproc_peak_t));
 
-    // Array for the features set of the imu model
-    float* features_imu_model = (float*)malloc(TOT_FEATURES_IMU_MODEL_IMU * sizeof(float));
-
-    float imu_proba = 0.0;
-
-    // Postprocessing arrays and variables
-    uint16_t *starts = (uint16_t*)malloc(MAX_PEAKS_EXPECTED * sizeof(uint16_t));
-    uint16_t *ends = (uint16_t*)malloc(MAX_PEAKS_EXPECTED * sizeof(uint16_t));
-    uint16_t *locs = (uint16_t*)malloc(MAX_PEAKS_EXPECTED * sizeof(uint16_t));
-    float *peaks = (float*)malloc(MAX_PEAKS_EXPECTED * sizeof(float));
-
-    // Number of peaks found from last output
     uint16_t n_peaks = 0;
-
-    // Number of peaks found in the current window
     uint16_t new_added = 0;
 
-    // Confidence of the model per each peak found
-    float *audio_confidence = (float*)malloc(MAX_PEAKS_EXPECTED * sizeof(float*));
+    score_t *audio_confidence = (score_t *)malloc((size_t)MAX_PEAKS_EXPECTED * sizeof(score_t));
 
-    // Index of the start of the current window (depending on the model to use, it indexes the AUDIO or the IMU signal)
     uint32_t idx_start_window = 0;
-
-    // Number of peaks for which the model confidence is above the threshold
     uint16_t n_idxs_above_th = 0;
+    int debug_cnt = 0;
 
-    int debug_cnt = 0;  // Used to count the iterations and eventually stop
+    feat_t gender_feature = 0;
+    feat_t bmi_feature = 0;
+
+#ifdef FXP_MODE
+    int16_t *audio_in_q14 = (int16_t *)malloc((size_t)AUDIO_LEN * sizeof(int16_t));
+    q11_5_t (*imu_in_q5)[Num_IMU_signals] = (q11_5_t(*)[Num_IMU_signals])malloc((size_t)IMU_LEN * sizeof(*imu_in_q5));
+    const audio_sample_t *audio_runtime_in = NULL;
+    const imu_sample_t (*imu_runtime_in)[Num_IMU_signals] = NULL;
+
+    if (!audio_in_q14 || !imu_in_q5) {
+        free(audio_in_q14);
+        free(imu_in_q5);
+        free(indexes_audio_f);
+        free(indexes_imu_f);
+        free(audio_feature_array);
+        free(imu_feature_array);
+        free(features_audio_model);
+        free(features_imu_model);
+        free(starts);
+        free(ends);
+        free(locs);
+        free(peaks);
+        free(audio_confidence);
+        return 1;
+    }
+
+    /* Single runtime boundary: source float samples are converted once to FxP carriers. */
+    for (int32_t i = 0; i < AUDIO_LEN; i++) {
+        audio_in_q14[i] = cough_source_audio_sample(audio_in.air[i]);
+    }
+    for (int32_t i = 0; i < IMU_LEN; i++) {
+        for (int8_t ax = 0; ax < Num_IMU_signals; ax++) {
+            imu_in_q5[i][ax] = cough_source_imu_sample(imu_in[i][ax]);
+        }
+    }
+
+    audio_runtime_in = audio_in_q14;
+    imu_runtime_in = imu_in_q5;
+    gender_feature = cough_source_feat(gender);
+    bmi_feature = cough_source_feat(bmi);
+#else
+    const audio_sample_t *audio_runtime_in = audio_in.air;
+    const imu_sample_t (*imu_runtime_in)[Num_IMU_signals] = imu_in;
+    gender_feature = (feat_t)gender;
+    bmi_feature = (feat_t)bmi;
+#endif
 
     init_state();
 
-
-    // Looping through the windows
-    while(1){
-
+    while (1) {
         idx_start_window = get_idx_window();
-        // printf("Start: %d\n", idx_start_window);
 
-        if(fsm_state.model == IMU_MODEL){
-
-            if(idx_start_window >= IMU_LEN){
-                // printf("RESET\n");
+        if (fsm_state.model == IMU_MODEL) {
+            if (idx_start_window + WINDOW_SAMP_IMU >= IMU_LEN) {
                 init_state();
                 idx_start_window = get_idx_window();
             }
 
-            // Extract IMU features
-            imu_features(imu_features_selector, &imu_in[idx_start_window], WINDOW_SAMP_IMU, imu_feature_array);
+            imu_features(imu_features_selector,
+                         &imu_runtime_in[idx_start_window],
+                         WINDOW_SAMP_IMU,
+                         imu_feature_array);
 
-            // Fill the array of final imu features to feed into the IMU model
-            for(int16_t j=0; j<N_IMU_FEATURES; j++){
+            for (int16_t j = 0; j < N_IMU_FEATURES; j++) {
                 features_imu_model[j] = imu_feature_array[indexes_imu_f[j]];
-                // printf("[%d]\t%f\n", j, features_imu_model[j]);
             }
-            if(imu_bio_feats_selector[0] == 1){
-                features_imu_model[N_IMU_FEATURES] = gender;
+            if (imu_bio_feats_selector[0] == 1) {
+                features_imu_model[N_IMU_FEATURES] = gender_feature;
             }
-            if(imu_bio_feats_selector[1] == 1){
-                features_imu_model[N_IMU_FEATURES+1] = bmi;
+            if (imu_bio_feats_selector[1] == 1) {
+                features_imu_model[N_IMU_FEATURES + 1] = bmi_feature;
             }
 
-            // Predict with the IMU model
-            imu_proba = imu_predict(features_imu_model);
-            // printf("IMU P: %f\n", imu_proba);
-            
-            // Update the output of the FSM
-            if(imu_proba>=IMU_TH){
-                fsm_state.model_cls_out = COUGH_OUT;
-            } else {
-                fsm_state.model_cls_out = NON_COUGH_OUT;
-            }
-        }
-        else { 
-
-            if(idx_start_window >= AUDIO_LEN){
+            imu_score = imu_predict(features_imu_model);
+            fsm_state.model_cls_out = is_cough(imu_score, SCORE_THRESHOLD_IMU) ? COUGH_OUT : NON_COUGH_OUT;
+        } else {
+            if (idx_start_window + WINDOW_SAMP_AUDIO >= AUDIO_LEN) {
                 break;
-                init_state();
-                idx_start_window = get_idx_window();
             }
 
-            // Extract AUDIO features
-            audio_features(audio_features_selector, &audio_in.air[idx_start_window], WINDOW_SAMP_AUDIO, AUDIO_FS, audio_feature_array);
+            audio_features(audio_features_selector,
+                           &audio_runtime_in[idx_start_window],
+                           WINDOW_SAMP_AUDIO,
+                           AUDIO_FS,
+                           audio_feature_array);
 
-            // Fill the array of fifeatures_imu_modelnal audio features to feed into the AUDIO model
-            for(int16_t j=0; j<N_AUDIO_FEATURES; j++){
+            for (int16_t j = 0; j < N_AUDIO_FEATURES; j++) {
                 features_audio_model[j] = audio_feature_array[indexes_audio_f[j]];
             }
-            if(audio_bio_feats_selector[0] == 1){
-                features_audio_model[N_AUDIO_FEATURES] = gender;
+            if (audio_bio_feats_selector[0] == 1) {
+                features_audio_model[N_AUDIO_FEATURES] = gender_feature;
             }
-            if(audio_bio_feats_selector[1] == 1){
-                features_audio_model[N_AUDIO_FEATURES+1] = bmi;
-            }
-
-            audio_proba = audio_predict(features_audio_model);
-            // printf("AUDIO P: %f\n", audio_proba);
-
-            // Update the output of the FSM
-            if(audio_proba >= AUDIO_TH){
-                fsm_state.model_cls_out = COUGH_OUT;
-            } else {
-                fsm_state.model_cls_out = NON_COUGH_OUT;
+            if (audio_bio_feats_selector[1] == 1) {
+                features_audio_model[N_AUDIO_FEATURES + 1] = bmi_feature;
             }
 
-            // Identify the peaks   
-            _get_cough_peaks(&audio_in.air[idx_start_window], WINDOW_SAMP_AUDIO, AUDIO_FS, &starts[n_peaks], &ends[n_peaks], &locs[n_peaks], &peaks[n_peaks], &new_added);
+            audio_score = audio_predict(features_audio_model);
+            fsm_state.model_cls_out = is_cough(audio_score, SCORE_THRESHOLD_AUDIO) ? COUGH_OUT : NON_COUGH_OUT;
 
-            for(uint16_t j=0; j<new_added; j++){
-                starts[n_peaks+j] += idx_start_window;
-                ends[n_peaks+j] += idx_start_window;
-                locs[n_peaks+j] += idx_start_window;
-                audio_confidence[n_peaks+j] = audio_proba;
+            _get_cough_peaks(&audio_runtime_in[idx_start_window], WINDOW_SAMP_AUDIO, AUDIO_FS,
+                             &starts[n_peaks], &ends[n_peaks], &locs[n_peaks], &peaks[n_peaks], &new_added);
+
+            for (uint16_t j = 0; j < new_added; j++) {
+                starts[n_peaks + j] += idx_start_window;
+                ends[n_peaks + j] += idx_start_window;
+                locs[n_peaks + j] += idx_start_window;
+                audio_confidence[n_peaks + j] = audio_score;
             }
             n_peaks += new_added;
         }
 
         update();
 
-        if(check_postprocessing()){
-
+        if (check_postprocessing()) {
             uint16_t n_peaks_final = 0;
 
-            if(n_peaks > 0){
-                // Keeps track of the indexes of the peaks for which the model confidence is above the threshold 
-                uint16_t *idxs_above_th = (uint16_t*)malloc(n_peaks * sizeof(uint16_t));
+            if (n_peaks > 0) {
+                uint16_t *idxs_above_th = (uint16_t *)malloc((size_t)n_peaks * sizeof(uint16_t));
 
-
-                for(uint16_t i=0; i<n_peaks; i++){
-                    if(audio_confidence[i] >= AUDIO_TH){
+                for (uint16_t i = 0; i < n_peaks; i++) {
+                    if (is_cough(audio_confidence[i], SCORE_THRESHOLD_AUDIO)) {
                         idxs_above_th[n_idxs_above_th] = i;
                         n_idxs_above_th++;
                     }
                 }
 
-                uint16_t *final_starts = (uint16_t*)malloc(n_idxs_above_th * sizeof(uint16_t));
-                uint16_t *final_ends = (uint16_t*)malloc(n_idxs_above_th * sizeof(uint16_t));
-                uint16_t *above_locs = (uint16_t*)malloc(n_idxs_above_th * sizeof(uint16_t));
-                float *above_peaks = (float*)malloc(n_idxs_above_th * sizeof(float));
+                uint16_t *final_starts = (uint16_t *)malloc((size_t)n_idxs_above_th * sizeof(uint16_t));
+                uint16_t *final_ends = (uint16_t *)malloc((size_t)n_idxs_above_th * sizeof(uint16_t));
+                uint16_t *above_locs = (uint16_t *)malloc((size_t)n_idxs_above_th * sizeof(uint16_t));
+                postproc_peak_t *above_peaks = (postproc_peak_t *)malloc((size_t)n_idxs_above_th * sizeof(postproc_peak_t));
 
-
-                for(uint16_t i=0; i<n_idxs_above_th; i++){
+                for (uint16_t i = 0; i < n_idxs_above_th; i++) {
                     final_starts[i] = starts[idxs_above_th[i]];
                     final_ends[i] = ends[idxs_above_th[i]];
                     above_locs[i] = locs[idxs_above_th[i]];
                     above_peaks[i] = peaks[idxs_above_th[i]];
                 }
 
-                // TODO: stai passando due volte gli stessi parametri!
                 n_peaks_final = _clean_cough_segments(final_starts, final_ends, above_locs, above_peaks, n_idxs_above_th, AUDIO_FS);
 
-                #ifdef EVALUATION_MODE
-                for(uint16_t k=0; k<n_peaks_final; k++){
+#ifdef EVALUATION_MODE
+                for (uint16_t k = 0; k < n_peaks_final; k++) {
                     printf("COUGH_SEG: %u %u\n", final_starts[k], final_ends[k]);
                 }
-                #endif
+#endif
 
                 free(idxs_above_th);
                 free(final_starts);
@@ -211,42 +225,38 @@ int main(){
                 free(above_locs);
                 free(above_peaks);
             }
-            
-            #ifdef EVALUATION_MODE
-            printf("N_PEAKS FINAL: %d\n", n_peaks_final);
-            #endif
-            
-            // Reset postprocessing variables to their default value
-            n_peaks = 0;
 
+#ifdef EVALUATION_MODE
+            printf("N_PEAKS FINAL: %d\n", n_peaks_final);
+#endif
+            (void)n_peaks_final;
+
+            n_peaks = 0;
             n_idxs_above_th = 0;
         }
 
         debug_cnt++;
-
-        if(debug_cnt == 100){
+        if (debug_cnt == 100) {
             break;
         }
-
     }
-
 
     free(indexes_audio_f);
     free(indexes_imu_f);
-
     free(audio_feature_array);
     free(imu_feature_array);
-
     free(features_audio_model);
     free(features_imu_model);
-
     free(starts);
     free(ends);
     free(locs);
     free(peaks);
-
     free(audio_confidence);
 
+#ifdef FXP_MODE
+    free(audio_in_q14);
+    free(imu_in_q5);
+#endif
 
     return 0;
 }

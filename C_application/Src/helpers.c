@@ -3,6 +3,7 @@
 #include <math.h>
 
 #include <helpers.h>
+
 #include <range_analysis.h>
 
 // Minimum float available (supposing 32-bit float)

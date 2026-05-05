@@ -15,11 +15,11 @@
 #include <kiss_fftr.h>
 #include <range_analysis.h>
 
+#ifndef FXP_MODE
 
 /*
     Helper function not callable externally.
-    This just computes the RFFT of the input signal and 
-    stores the Real and Imaginary parts in two separate arrays
+    Stores re/im as float (original behaviour).
 */
 void _rfft(const float *sig, int16_t len, float *real, float *imag);
 
@@ -30,7 +30,6 @@ void compute_rfft(const float *sig, int16_t len, int16_t fs, float *mags, float 
 
     float *re = (float*)malloc(len * sizeof(float));
     float *im = (float*)malloc(len * sizeof(float));
-
     _rfft(sig, len, re, im);
 
     int16_t fft_size = (len/2)+1;
@@ -62,11 +61,11 @@ void compute_rfft(const float *sig, int16_t len, int16_t fs, float *mags, float 
 void _rfft(const float *sig, int16_t len, float *real, float *imag){
 
     kiss_fftr_cfg cfg = kiss_fftr_alloc(len, 0, 0, 0);
-    kiss_fft_cpx *cx_out = (kiss_fft_cpx *) malloc(len * sizeof(kiss_fft_cpx));
+    int16_t fft_size = (len / 2) + 1;
+    kiss_fft_cpx *cx_out = (kiss_fft_cpx *) malloc((size_t)fft_size * sizeof(kiss_fft_cpx));
 
     kiss_fftr(cfg, sig, cx_out);
-
-    for(int16_t i=0; i<len; i++){
+    for(int16_t i=0; i<fft_size; i++){
         real[i] = cx_out[i].r;
         imag[i] = cx_out[i].i;
     }
@@ -84,7 +83,6 @@ void compute_periodogram(const float *sig, int16_t len, int16_t fs, float *psd, 
     float *cumul_sums = (float*)malloc(NPERSEG * sizeof(float));  // To store the cumulative sum of the FFT of each frequency bin
     memset(cumul_sums, 0, NPERSEG * sizeof(float));
 
-    // To store the real and imaginary parts of each FFT
     float *re = (float*)malloc(NPERSEG * sizeof(float));
     float *im = (float*)malloc(NPERSEG * sizeof(float));
 
@@ -491,3 +489,5 @@ void get_mel_spectrogram_features(const float *x, int16_t len, uint8_t *idx_need
     free(spectrogram);
     free(mel_dB);
 }
+
+#endif /* !FXP_MODE */

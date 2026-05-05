@@ -163,7 +163,7 @@ def main():
     # Transform dataset if needed
     input_data_dir = os.path.join(C_APP_DIR, "input_data")
     print("Ensuring dataset is transformed...")
-    transform_all(dataset_path, input_data_dir)
+    transform_all(dataset_path, input_data_dir, args.subjects)
 
     subjects = args.subjects or get_subjects(dataset_path)
     print(f"Running range analysis on {len(subjects)} subjects")

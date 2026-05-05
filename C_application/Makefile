@@ -2,12 +2,17 @@
 CC 			=	gcc
 APP 		= 	cough-e
 BUILD_DIR 	= 	build
+.DEFAULT_GOAL = all
 
-SRC_DIRS 	= 	Src kiss_fftr
+SRC_DIRS 	= 	Src kiss_fftr FxP/imu FxP/audio
 SRC 		= 	$(foreach c, $(SRC_DIRS), $(wildcard $c/*.c))
 
-INC_DIRS 	= 	Inc ./ kiss_fftr range_analysis
+INC_DIRS 	= 	Inc FxP ./ kiss_fftr range_analysis
 INC 		= 	$(foreach d, $(INC_DIRS), -I$d)
+
+TWIDDLE_GENERATOR = kiss_fftr/gen_twiddles_fixed.py
+TWIDDLE_Q15 = kiss_fftr/twiddles_win08_fs8000_q15.h
+TWIDDLE_Q31 = kiss_fftr/twiddles_win08_fs8000_q31.h
 
 MATH 		= 	-lm
 
@@ -32,7 +37,10 @@ EXEC_STRING +=	"|     Start of execution...      |\n"
 EXEC_STRING +=	"|++++++++++++++++++++++++++++++++|\n" 
 
 
-all:
+$(TWIDDLE_Q15) $(TWIDDLE_Q31): $(TWIDDLE_GENERATOR)
+	python3 $(TWIDDLE_GENERATOR) --formats q15 q31 --out-dir kiss_fftr
+
+all: $(TWIDDLE_Q15) $(TWIDDLE_Q31)
 	@mkdir -p $(BUILD_DIR)
 	$(CC) -Wall -o $(BUILD_DIR)/$(APP) main.c $(SRC) $(INC) $(MATH) -O3 -g $(CFLAGS)
 	@echo $(COMP_STRING)

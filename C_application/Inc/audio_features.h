@@ -3,21 +3,32 @@
 
 #include <inttypes.h>
 
+#include <core/fxp_core.h>
+
 /* Defines of the hyperparameters of audio features extraction */
 
 
-#define WIND_LEN_AUD    0.8
+#define WIND_LEN_AUD_NUM 4U
+#define WIND_LEN_AUD_DEN 5U
+#ifndef FXP_MODE
+#define WIND_LEN_AUD    ((float)WIND_LEN_AUD_NUM / (float)WIND_LEN_AUD_DEN)
+#endif
 #define OVERLAP_AUD     50  
 
 // audio samples in a window
-#define WINDOW_SAMP_AUDIO   (int16_t)(WIND_LEN_AUD * AUDIO_FS)
+#define WINDOW_SAMP_AUDIO   ((int16_t)(((uint32_t)AUDIO_FS * WIND_LEN_AUD_NUM) / WIND_LEN_AUD_DEN))
 
-#define OVERLAP_SAMP        (int16_t)(WINDOW_SAMP_AUDIO * OVERLAP_AUD / 100.0)
-#define AUDIO_STEP          (int16_t)(WINDOW_SAMP_AUDIO * (1.0 - (OVERLAP_AUD / 100.0)))
+#define OVERLAP_SAMP        ((int16_t)(((uint32_t)WINDOW_SAMP_AUDIO * OVERLAP_AUD) / 100U))
+#define AUDIO_STEP          ((int16_t)(WINDOW_SAMP_AUDIO - OVERLAP_SAMP))
 #define N_OVERLAPS          (int16_t)(WINDOW_SAMP_AUDIO / AUDIO_STEP - 1)
 
+#define AUDIO_WINDOW_TICKS  ((uint32_t)WINDOW_SAMP_AUDIO)
+#define AUDIO_STEP_TICKS    ((uint32_t)AUDIO_STEP)
+
+#ifndef FXP_MODE
 #define AUDIO_OVERLAP_SEC   (float)(WIND_LEN_AUD * (OVERLAP_AUD / 100.0))
 #define AUDIO_STEP_SEC      (float)(WIND_LEN_AUD  - AUDIO_OVERLAP_SEC)
+#endif
 
 
 // Number of MFCCs to extract, this number of feature per each family
@@ -81,5 +92,42 @@ enum audio_features_families{
     ENERGY_ENVELOPE_PEAK_DETECT,
     Number_AUDIO_Features = ENERGY_ENVELOPE_PEAK_DETECT + N_EEPD// Hardcoded just to get the final length
 };
+
+static inline uint8_t audio_feature_frac_bits(uint16_t feature_idx)
+{
+    if (feature_idx == SPECTRAL_ROLLOFF || feature_idx == DOMINANT_FREQUENCY) {
+        return FXP_FRAC_AUDIO_FFT_FREQUENCIES;
+    }
+    if (feature_idx == SPECTRAL_CENTROID) return FXP_FRAC_AUDIO_FFT_CENTROID;
+    if (feature_idx == SPECTRAL_SPREAD) return FXP_FRAC_AUDIO_FFT_SPREAD;
+    if (feature_idx == SPECTRAL_KURTOSIS) return FXP_FRAC_AUDIO_FFT_KURTOSIS;
+    if (feature_idx == SPECTRAL_FLATNESS) return FXP_FRAC_AUDIO_PSD_FLATNESS;
+
+    if (feature_idx >= POWER_SPECTRAL_DENSITY &&
+        feature_idx < POWER_SPECTRAL_DENSITY + N_PSD) {
+        return FXP_FRAC_AUDIO_PSD_BANDPOWER;
+    }
+
+    if (feature_idx >= MEL_FREQUENCY_CEPSTRAL_COEFFICIENT &&
+        feature_idx < MEL_FREQUENCY_CEPSTRAL_COEFFICIENT + (3U * N_MFCC)) {
+        return 9U;
+    }
+    if (feature_idx >= MEL_FREQUENCY_CEPSTRAL_COEFFICIENT + (3U * N_MFCC) &&
+        feature_idx < MEL_FREQUENCY_CEPSTRAL_COEFFICIENT + (4U * N_MFCC)) {
+        return 14U;
+    }
+
+    return FXP_PIPE_FRAC;
+}
+
+static inline uint8_t audio_feature_is_signed(uint16_t feature_idx)
+{
+    if (feature_idx >= MEL_FREQUENCY_CEPSTRAL_COEFFICIENT &&
+        feature_idx < MEL_FREQUENCY_CEPSTRAL_COEFFICIENT + (3U * N_MFCC)) {
+        return 1U;
+    }
+
+    return 0U;
+}
 
 #endif

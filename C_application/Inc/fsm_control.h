@@ -37,10 +37,10 @@ typedef struct fsm
 {
     model_t model;              // Model to process the current window
     class_t model_cls_out;      // Output of the model for the current window
-    float timestamp_last_out;   // Timestamp of when the last output was provided
-    float time_from_last_out;   // Time elapsed from last output. Once it overcomes the time threshold, the system should compute the postprocessing
-    float time_start_wind;      // Timestamp of the start of the current window --> used for the rerun update
-    float time_start_last_wind; // Timestamp of the start of the last window --> used for recording the time of the last output
+    uint32_t last_output_tick;       // Audio-sample tick of when the last output was provided
+    uint32_t ticks_from_last_output; // Audio-sample ticks elapsed from last output
+    uint32_t window_start_tick;      // Audio-sample tick of the current window start
+    uint32_t last_window_start_tick; // Audio-sample tick of the last processed window start
     uint8_t n_winds_aud;        // Number of consecutive windows processed with AUDIO model
 } fsm_t;
 
@@ -59,9 +59,9 @@ extern fsm_t fsm_state;
  * 
  * model                --> IMU / AUDIO depedning on the selected confguration (MIX / ONLY_AUDIO / ONLY_IMU)
  * model_cls_out        --> NON_COUGH
- * time_from_last_out   --> 0.0 
- * time_start_wind      --> 0.0
- * time_start_last_wind --> 0.0
+ * ticks_from_last_output --> 0
+ * window_start_tick      --> 0
+ * last_window_start_tick --> 0
  * n_winds_aud          --> 0
 */
 void init_state();

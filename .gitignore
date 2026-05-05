@@ -6,30 +6,37 @@ __pycache__/
 # C build
 C_application/build/
 
+# Local editor formatting
+.clang-format
+.vscode/*.json
+
+# Generated KissFFT twiddles
+C_application/kiss_fftr/twiddles_win08_fs8000_q15.h
+C_application/kiss_fftr/twiddles_win08_fs8000_q31.h
+
 # Generated evaluation headers (per-subject folders)
 C_application/input_data/*/
 
 # Evaluation output
-C_application/evaluation/results.csv
-C_application/evaluation/summary.json
-C_application/evaluation/results_float.csv
-C_application/evaluation/results_fxp.csv
-C_application/evaluation/comparison_float_vs_fxp.json
+C_application/evaluation/*.csv
+C_application/evaluation/*.json
+C_application/evaluation/fxp/__pycache__/
+C_application/evaluation/fxp/.build/
+C_application/evaluation/fxp/*.o
+C_application/evaluation/fxp/*.dSYM/
+C_application/evaluation/fxp/fxp_stage_harness
+C_application/evaluation/fxp/fxp_stage_harness_*
+C_application/evaluation/fxp/fxp_progressive_harness
+C_application/evaluation/fxp/fxp_progressive_harness_*
+C_application/evaluation/fxp/.fxp_stage_harness.build.lock
 
 # Range analysis output and scripts (FxP-Port branch only keeps the header)
-C_application/range_analysis/*.csv
-C_application/range_analysis/*.json
-C_application/range_analysis/*.py
-C_application/range_analysis/accuracy_results.csv
-C_application/range_analysis/accuracy_summary.csv
-C_application/range_analysis/precision_analysis.csv
-
-# FxP-Port branch notes
-C_application/port.md
-C_application/OVERLEAF.md
-
-# FxP-Port test artifacts
-C_application/test/
+C_application/range_analysis/
 
 # Local dataset
 datasets/
+
+# Overleaf docs
+C_application/OVERLEAF.md
+C_application/port.md
+private/
