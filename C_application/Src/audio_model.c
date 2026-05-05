@@ -83,7 +83,7 @@ fxp_q16_t audio_predict_q16(const fxp_feat_t *feats)
         }
     }
 
-    return fxp_sat_s32_from_s64(score_q16);
+    return (fxp_q16_t)score_q16;
 }
 
 #else

@@ -170,7 +170,7 @@ static void audio_crest_q16(const int8_t *selector,
     }
 
     uint64_t mean_sq_q28 = (sum_sq_q28 + ((uint64_t)len >> 1U)) / (uint64_t)len;
-    int32_t rms_q14 = (int32_t)fxp_sat_u32_from_u64(fxp_sqrt64(mean_sq_q28));
+    int32_t rms_q14 = (int32_t)fxp_sqrt64(mean_sq_q28);
     feats[CREST_FACTOR] = (rms_q14 > 0)
         ? (fxp_feat_t)fxp_div_s32(max_v, rms_q14, FXP_PIPE_FRAC)
         : 0;

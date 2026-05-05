@@ -33,7 +33,7 @@ static inline uint16_t _u16_min(uint16_t a, uint16_t b)
 static inline uint16_t _u16_ms_to_samples(uint32_t ms, uint16_t fs)
 {
     uint32_t v = (ms * (uint32_t)fs + 500U) / 1000U;
-    return fxp_sat_u16_from_u32(v);
+    return (uint16_t)v;
 }
 
 static inline int32_t _div_round_s64_by_s32(int64_t num, int32_t den)
@@ -113,7 +113,7 @@ static int16_t *_downsample(const int16_t *sig, int16_t len, int16_t fs, int16_t
         int32_t centered = (int32_t)res[i] - mean_q14;
         int64_t num = ((int64_t)centered) << 15;
         int32_t q15 = _div_round_s64_by_s32(num, max_abs);
-        res[i] = fxp_sat_s16_from_s32(q15);
+        res[i] = (int16_t)q15;
     }
 
     return res;
@@ -175,12 +175,12 @@ void _get_cough_peaks(const int16_t *seg,
                 cough_end = i;
                 cough_in_progress = 0;
 
-                starts[peaks_found] = fxp_sat_u16_from_u32((uint32_t)cough_start * (uint32_t)scale_freq);
-                ends[peaks_found] = fxp_sat_u16_from_u32((uint32_t)cough_end * (uint32_t)scale_freq);
+                starts[peaks_found] = (uint16_t)((uint32_t)cough_start * (uint32_t)scale_freq);
+                ends[peaks_found] = (uint16_t)((uint32_t)cough_end * (uint32_t)scale_freq);
 
                 int16_t local_peak = _vect_max_index_q15(&downsample_seg[cough_start], (int16_t)((cough_end - cough_start) + 1));
                 uint16_t peak_ds_idx = (uint16_t)(cough_start + local_peak);
-                peaks_locs[peaks_found] = fxp_sat_u16_from_u32((uint32_t)peak_ds_idx * (uint32_t)scale_freq);
+                peaks_locs[peaks_found] = (uint16_t)((uint32_t)peak_ds_idx * (uint32_t)scale_freq);
                 peaks_amps[peaks_found] = downsample_seg[peak_ds_idx];
 
                 peaks_found++;
@@ -191,12 +191,12 @@ void _get_cough_peaks(const int16_t *seg,
                     cough_end = i;
                     cough_in_progress = 0;
 
-                    starts[peaks_found] = fxp_sat_u16_from_u32((uint32_t)cough_start * (uint32_t)scale_freq);
-                    ends[peaks_found] = fxp_sat_u16_from_u32((uint32_t)cough_end * (uint32_t)scale_freq);
+                    starts[peaks_found] = (uint16_t)((uint32_t)cough_start * (uint32_t)scale_freq);
+                    ends[peaks_found] = (uint16_t)((uint32_t)cough_end * (uint32_t)scale_freq);
 
                     int16_t local_peak = _vect_max_index_q15(&downsample_seg[cough_start], (int16_t)((cough_end - cough_start) + 1));
                     uint16_t peak_ds_idx = (uint16_t)(cough_start + local_peak);
-                    peaks_locs[peaks_found] = fxp_sat_u16_from_u32((uint32_t)peak_ds_idx * (uint32_t)scale_freq);
+                    peaks_locs[peaks_found] = (uint16_t)((uint32_t)peak_ds_idx * (uint32_t)scale_freq);
                     peaks_amps[peaks_found] = downsample_seg[peak_ds_idx];
 
                     peaks_found++;
@@ -215,7 +215,7 @@ void _get_cough_peaks(const int16_t *seg,
 
     if (peaks_found == 0) {
         int16_t peak_ds_idx = _vect_max_index_u32(seg_squared, downsample_len);
-        peaks_locs[0] = fxp_sat_u16_from_u32((uint32_t)peak_ds_idx * (uint32_t)scale_freq);
+        peaks_locs[0] = (uint16_t)((uint32_t)peak_ds_idx * (uint32_t)scale_freq);
         peaks_amps[0] = downsample_seg[peak_ds_idx];
 
         if (peaks_locs[0] > 0U) {
@@ -372,7 +372,7 @@ uint16_t _clean_cough_segments(uint16_t *starts_idxs,
             }
 
             uint16_t extra = (uint16_t)((((uint64_t)series_multiplier_q15 * (uint64_t)avg_cough_end_samples) + (1U << 14)) >> 15);
-            ends_idxs[i] = fxp_sat_u16_from_u32((uint32_t)locs_final[i] + (uint32_t)extra);
+            ends_idxs[i] = (uint16_t)((uint32_t)locs_final[i] + (uint32_t)extra);
             cough_series_count = 0U;
         } else {
             cough_series_count++;

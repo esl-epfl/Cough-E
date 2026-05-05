@@ -583,7 +583,7 @@ static void add_audio_scalar_kernel_metrics(named_metric_t *table,
     }
 
     uint64_t mean_sq_q28 = (sum_sq_q28 + ((uint64_t)len >> 1U)) / (uint64_t)len;
-    int32_t rms_q14 = (int32_t)fxp_sat_u32_from_u64(fxp_sqrt64(mean_sq_q28));
+    int32_t rms_q14 = (int32_t)fxp_sqrt64(mean_sq_q28);
     int32_t crest_q16 = (rms_q14 > 0) ? fxp_div_s32(max_q14, rms_q14, FXP_PIPE_FRAC) : 0;
 
     if (need_rms) {
