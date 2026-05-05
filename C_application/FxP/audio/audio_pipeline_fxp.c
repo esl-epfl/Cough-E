@@ -541,30 +541,15 @@ static int32_t _mel_db(uint64_t power, int32_t offset) {
 static uint16_t _mel_entropy(const uq20_44_t *row_power, int16_t n_frames) {
     if (!row_power || n_frames <= 0) return 0;
 
-    uint64_t row_max = 0;
-    for (int16_t t = 0; t < n_frames; t++) {
-        if (row_power[t] > row_max) row_max = row_power[t];
-    }
-    if (row_max == 0) return 0;
-
-    uint32_t row_msb = 63U - (uint32_t)__builtin_clzll(row_max);
-    uint32_t sum_bits = (n_frames <= 1) ? 0U
-                                        : (32U - (uint32_t)__builtin_clz((uint32_t)(n_frames - 1)));
-    int32_t pre_shift_i = (int32_t)row_msb + (int32_t)sum_bits - 62;
-    uint32_t pre_shift = (pre_shift_i > 0) ? (uint32_t)pre_shift_i : 0U;
-
     uint64_t sum = 0;
     for (int16_t t = 0; t < n_frames; t++) {
-        uint64_t power = row_power[t] >> pre_shift;
-        if (pre_shift && ((row_power[t] >> (pre_shift - 1U)) & 1ULL)) power++;
-        sum += power;
+        sum += row_power[t];
     }
     if (sum == 0) return 0;
 
     int32_t entropy = 0;
     for (int16_t t = 0; t < n_frames; t++) {
-        uint64_t power = row_power[t] >> pre_shift;
-        if (pre_shift && ((row_power[t] >> (pre_shift - 1U)) & 1ULL)) power++;
+        uint64_t power = row_power[t];
         if (power == 0 || power >= sum) continue;
 
         uint32_t p = 0;
