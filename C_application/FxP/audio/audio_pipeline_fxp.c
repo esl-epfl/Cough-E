@@ -632,7 +632,7 @@ void audio_mel_features(const int8_t *features_selector, const int16_t *sig, int
     for (int16_t f = 0; f < n_frames; f++) {
         int32_t frame_start = (int32_t)f * HOP_LEN;
 
-        // Reflect-pad on the fly and apply the Q1.15 Hann window into Q1.31.
+        // Reflect-pad on the fly and apply the Q1.15 Hann window into Q2.30.
         for (int16_t n = 0; n < N_FFT; n++) {
             int32_t idx = frame_start + n;
             int16_t sample_idx;
@@ -646,15 +646,15 @@ void audio_mel_features(const int8_t *features_selector, const int16_t *sig, int
 
             q2_14_t sample = sig[sample_idx];
             int64_t windowed = (int64_t)sample * (int64_t)fxp_mfcc_hann_q15[n];
-            timedata[n] = (kiss_fft_scalar)(windowed << 2);
+            timedata[n] = (kiss_fft_scalar)(windowed << 1);
         }
 
         kiss_fftr(cfg, timedata, cx_out);
 
         // Store frame power as UQ20.44 from the Q10.22 FFT bins.
         for (int16_t k = 0; k < FFT_RES_LEN; k++) {
-            q10_22_t re = (q10_22_t)(cx_out[k].r >> 9);
-            q10_22_t im = (q10_22_t)(cx_out[k].i >> 9);
+            q10_22_t re = (q10_22_t)(cx_out[k].r >> 8);
+            q10_22_t im = (q10_22_t)(cx_out[k].i >> 8);
             uq20_44_t re_2 = (uq20_44_t)((int64_t)re * (int64_t)re);
             uq20_44_t im_2 = (uq20_44_t)((int64_t)im * (int64_t)im);
             uq20_44_t p = re_2 + im_2;
@@ -700,10 +700,8 @@ void audio_mel_features(const int8_t *features_selector, const int16_t *sig, int
 
         for (int16_t f = 0; f < n_frames; f++) {
             size_t idx = (size_t)m * (size_t)n_frames + (size_t)f;
-            int32_t db_wide = mel_db[idx];
-            if (db_wide < clip) db_wide = clip;
-            q7_9_t db = (q7_9_t)db_wide;
-            mel_db[idx] = db_wide;
+            q7_9_t db = (q7_9_t)((mel_db[idx] < clip) ? clip : mel_db[idx]);
+            mel_db[idx] = db;
             row_sum += (q21_11_t)db << 2; // Q7.9 to Q21.11 for mean calculation
             if (db > row_max) row_max = db;
         }
@@ -829,7 +827,7 @@ int audio_mel_stage_probe(const int8_t *features_selector, const int16_t *sig, i
 
             q2_14_t sample = sig[sample_idx];
             int64_t windowed = (int64_t)sample * (int64_t)fxp_mfcc_hann_q15[n];
-            timedata[n] = (kiss_fft_scalar)(windowed << 2);
+            timedata[n] = (kiss_fft_scalar)(windowed << 1);
         }
 
         kiss_fftr(cfg, timedata, cx_out);
@@ -837,8 +835,8 @@ int audio_mel_stage_probe(const int8_t *features_selector, const int16_t *sig, i
         uq20_44_t *frame_power = &probe->frame_power[(size_t)f * (size_t)FFT_RES_LEN];
         // Keep the per-frame STFT power visible to the stage harness.
         for (int16_t k = 0; k < FFT_RES_LEN; k++) {
-            q10_22_t re = (q10_22_t)(cx_out[k].r >> 9);
-            q10_22_t im = (q10_22_t)(cx_out[k].i >> 9);
+            q10_22_t re = (q10_22_t)(cx_out[k].r >> 8);
+            q10_22_t im = (q10_22_t)(cx_out[k].i >> 8);
             uq20_44_t re_2 = (uq20_44_t)((int64_t)re * (int64_t)re);
             uq20_44_t im_2 = (uq20_44_t)((int64_t)im * (int64_t)im);
             uq20_44_t p = re_2 + im_2;
@@ -884,10 +882,8 @@ int audio_mel_stage_probe(const int8_t *features_selector, const int16_t *sig, i
 
         for (int16_t f = 0; f < n_frames; f++) {
             size_t idx = (size_t)m * (size_t)n_frames + (size_t)f;
-            int32_t db_wide = probe->mel_db_q9[idx];
-            if (db_wide < clip) db_wide = clip;
-            q7_9_t db = (q7_9_t)db_wide;
-            probe->mel_db_q9[idx] = db_wide;
+            q7_9_t db = (q7_9_t)((probe->mel_db_q9[idx] < clip) ? clip : probe->mel_db_q9[idx]);
+            probe->mel_db_q9[idx] = db;
             row_sum += (q21_11_t)db << 2; // Q7.9 to Q21.11 for mean calculation
             if (db > row_max) row_max = db;
         }
