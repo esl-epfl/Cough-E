@@ -50,6 +50,11 @@ void audio_mel_features(const int8_t *features_selector,
                         int16_t len,
                         fxp_feat_t *feats);
 
+void audio_crest_factor(const int8_t *features_selector,
+                        const int16_t *sig,
+                        int16_t len,
+                        fxp_feat_t *feats);
+
 #if defined(FXP_STAGE_PROBES)
 
 int audio_mel_stage_probe(const int8_t *features_selector,

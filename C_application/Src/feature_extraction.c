@@ -561,84 +561,6 @@ static int fxp_is_required(const int8_t *features_selector, uint16_t start_index
     return 0;
 }
 
-static int check_audio_selector_fxp(const int8_t *features_selector)
-{
-    static const uint16_t float_only_audio[] = {
-        SPECTRAL_DECREASE,
-        SPECTRAL_SLOPE,
-        SPECTRAL_SKEW,
-        SPECTRAL_STD,
-        SPECTRAL_ENTROPY,
-        ROOT_MEANS_SQUARED,
-    };
-
-    for (size_t i = 0; i < sizeof(float_only_audio) / sizeof(float_only_audio[0]); i++) {
-        uint16_t idx = float_only_audio[i];
-        if (features_selector[idx] == 1) {
-            fprintf(stderr, "FXP audio runtime: selected feature index %u is float-only.\n", (unsigned)idx);
-            return 0;
-        }
-    }
-    return 1;
-}
-
-static void audio_crest_factor_native_from_q14(const int8_t *features_selector,
-                                               const int16_t *sig_q14,
-                                               int16_t len,
-                                               fxp_feat_t *feats)
-{
-    if (!features_selector[CREST_FACTOR] || len <= 0) return;
-
-    int64_t sum_q14 = 0;
-    for (int16_t i = 0; i < len; i++) {
-        sum_q14 += (int64_t)sig_q14[i];
-    }
-
-    int32_t mean_q14 = (sum_q14 >= 0)
-        ? (int32_t)((sum_q14 + (len / 2)) / len)
-        : (int32_t)(-(((-sum_q14) + (len / 2)) / len));
-
-    int32_t max_v = (int32_t)sig_q14[0] - mean_q14;
-    uint64_t sum_sq_q28 = 0;
-    for (int16_t i = 0; i < len; i++) {
-        int32_t cur = (int32_t)sig_q14[i] - mean_q14;
-        if (cur > max_v) max_v = cur;
-        sum_sq_q28 += (uint64_t)((int64_t)cur * (int64_t)cur);
-    }
-
-    uint64_t mean_sq_q28 = (sum_sq_q28 + ((uint64_t)len >> 1U)) / (uint64_t)len;
-    int32_t rms_q14 = (int32_t)fxp_sqrt64(mean_sq_q28);
-    feats[CREST_FACTOR] = (rms_q14 > 0)
-        ? fxp_div_s32(max_v, rms_q14, FXP_PIPE_FRAC)
-        : 0;
-}
-
-static void audio_zcr_native_from_q14(const int8_t *features_selector,
-                                      const int16_t *sig_q14,
-                                      int16_t len,
-                                      fxp_feat_t *feats)
-{
-    if (!features_selector[ZERO_CROSSING_RATE] || len <= 1) return;
-
-    int64_t sum_q14 = 0;
-    for (int16_t i = 0; i < len; i++) {
-        sum_q14 += (int64_t)sig_q14[i];
-    }
-    int32_t mean_q14 = fxp_round_div_s64(sum_q14, len);
-
-    uint32_t crossings = 0;
-    int32_t prev = (int32_t)sig_q14[0] - mean_q14;
-    for (int16_t i = 1; i < len; i++) {
-        int32_t cur = (int32_t)sig_q14[i] - mean_q14;
-        if ((prev < 0 && cur > 0) || (prev > 0 && cur < 0)) crossings++;
-        prev = cur;
-    }
-
-    uint32_t denom = (uint32_t)(len - 1);
-    uint32_t zcr_q16 = (uint32_t)((((uint64_t)crossings) << FXP_PIPE_FRAC) + (denom >> 1U)) / denom;
-    feats[ZERO_CROSSING_RATE] = (fxp_feat_t)zcr_q16;
-}
-
 void audio_features(const int8_t *features_selector,
                     const int16_t *sig_q14,
                     int16_t len,
@@ -646,13 +568,11 @@ void audio_features(const int8_t *features_selector,
                     fxp_feat_t *feats)
 {
     if (!features_selector || !sig_q14 || !feats || len <= 0 || fs <= 0) return;
-    if (!check_audio_selector_fxp(features_selector)) abort();
 
     audio_fft_features(features_selector, sig_q14, len, fs, feats);
     audio_psd_features(features_selector, sig_q14, len, fs, feats);
     audio_mel_features(features_selector, sig_q14, len, feats);
-    audio_zcr_native_from_q14(features_selector, sig_q14, len, feats);
-    audio_crest_factor_native_from_q14(features_selector, sig_q14, len, feats);
+    audio_crest_factor(features_selector, sig_q14, len, feats);
 }
 
 void imu_features(const int8_t *features_selector,

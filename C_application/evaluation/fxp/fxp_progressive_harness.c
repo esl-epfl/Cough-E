@@ -21,6 +21,11 @@
 #include <imu_model.h>
 #include <postprocessing.h>
 
+void audio_crest_factor(const int8_t *features_selector,
+                        const int16_t *sig,
+                        int16_t len,
+                        fxp_feat_t *feats);
+
 #define TIME_DEADLINE_OUTPUT_NUM 3U
 #define TIME_DEADLINE_OUTPUT_DEN 2U
 #define TIME_DEADLINE_OUTPUT_TICKS ((uint32_t)(((uint64_t)TIME_DEADLINE_OUTPUT_NUM * AUDIO_FS) / TIME_DEADLINE_OUTPUT_DEN))
@@ -148,34 +153,6 @@ static void copy_audio_feature_range(float *dst, const fxp_feat_t *src, uint16_t
     }
 }
 
-static void audio_crest_q16(const int8_t *selector,
-                            const int16_t *sig_q14,
-                            int16_t len,
-                            fxp_feat_t *feats)
-{
-    if (!selector[CREST_FACTOR] || len <= 0) return;
-
-    int64_t sum_q14 = 0;
-    for (int16_t i = 0; i < len; i++) sum_q14 += sig_q14[i];
-    int32_t mean_q14 = (sum_q14 >= 0)
-        ? (int32_t)((sum_q14 + (len / 2)) / len)
-        : (int32_t)(-(((-sum_q14) + (len / 2)) / len));
-
-    int32_t max_v = (int32_t)sig_q14[0] - mean_q14;
-    uint64_t sum_sq_q28 = 0;
-    for (int16_t i = 0; i < len; i++) {
-        int32_t cur = (int32_t)sig_q14[i] - mean_q14;
-        if (cur > max_v) max_v = cur;
-        sum_sq_q28 += (uint64_t)((int64_t)cur * (int64_t)cur);
-    }
-
-    uint64_t mean_sq_q28 = (sum_sq_q28 + ((uint64_t)len >> 1U)) / (uint64_t)len;
-    int32_t rms_q14 = (int32_t)fxp_sqrt64(mean_sq_q28);
-    feats[CREST_FACTOR] = (rms_q14 > 0)
-        ? (fxp_feat_t)fxp_div_s32(max_v, rms_q14, FXP_PIPE_FRAC)
-        : 0;
-}
-
 static void apply_audio_block(progressive_block_t block,
                               const float *sig,
                               int16_t len,
@@ -214,7 +191,7 @@ static void apply_audio_block(progressive_block_t block,
     }
 
     if (block == BLOCK_AUDIO_SCALAR || block == BLOCK_AUDIO_ALL) {
-        audio_crest_q16(audio_features_selector, sig_q14, len, fxp_feats);
+        audio_crest_factor(audio_features_selector, sig_q14, len, fxp_feats);
         if (audio_features_selector[CREST_FACTOR]) features[CREST_FACTOR] = audio_feat_to_float(fxp_feats[CREST_FACTOR], CREST_FACTOR);
     }
 

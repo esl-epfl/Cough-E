@@ -650,5 +650,5 @@ static inline uq0_16_t _exp_psd(q5_11_t x)
         else output = (((uint64_t)result) + ((uint64_t)1U << (shift - 1U))) >> shift;
     }
 
-    return (uq0_16_t)output;
+    return (output > UINT16_MAX) ? UINT16_MAX : (uq0_16_t)output;
 }

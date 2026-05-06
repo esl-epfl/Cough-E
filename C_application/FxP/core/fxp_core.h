@@ -56,7 +56,9 @@ typedef int32_t q13_19_t;
 typedef int32_t q16_16_t;
 typedef int32_t q21_11_t;
 typedef int32_t q10_22_t;
+typedef int32_t q18_14_t;
 typedef int32_t q2_30_t;
+typedef int32_t q8_24_t;
 typedef uint32_t uq10_22_t;
 typedef uint32_t uq13_19_t;
 typedef uint32_t uq16_16_t;
@@ -73,9 +75,11 @@ typedef uint32_t uq26_6_t;
 typedef uint32_t uq14_18_t;
 typedef uint32_t uq24_8_t;
 typedef uint32_t uq18_14_t;
+typedef uint32_t uq4_28_t;
 
 /* 64-bit aliases */
 typedef uint64_t uq20_44_t;
+typedef uint64_t uq16_48_t;
 typedef uint64_t uq45_19_t;
 typedef uint64_t uq44_20_t;
 typedef uint64_t uq24_40_t;
@@ -87,11 +91,6 @@ typedef uint64_t uq32_32_t;
 /*  Math helpers                                                              */
 /* -------------------------------------------------------------------------- */
 
-static inline int32_t fxp_div_s32(int32_t num, int32_t denom, int extra) {
-    if (denom == 0) return (num >= 0) ? INT32_MAX : INT32_MIN;
-    int64_t scaled = ((int64_t)num) << extra;
-    return (int32_t)(scaled / denom);
-}
 
 static inline int32_t fxp_round_div_s64(int64_t num, int32_t den) {
     if (den <= 0) return 0;

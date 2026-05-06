@@ -551,6 +551,7 @@ static void add_audio_scalar_kernel_metrics(named_metric_t *table,
                                            const int8_t *selector,
                                            const float *sig,
                                            const int16_t *sig_q14,
+                                           const fxp_feat_t *fxp_feats,
                                            int16_t len)
 {
     int need_rms = selector[ROOT_MEANS_SQUARED] || selector[CREST_FACTOR];
@@ -584,14 +585,14 @@ static void add_audio_scalar_kernel_metrics(named_metric_t *table,
 
     uint64_t mean_sq_q28 = (sum_sq_q28 + ((uint64_t)len >> 1U)) / (uint64_t)len;
     int32_t rms_q14 = (int32_t)fxp_sqrt64(mean_sq_q28);
-    int32_t crest_q16 = (rms_q14 > 0) ? fxp_div_s32(max_q14, rms_q14, FXP_PIPE_FRAC) : 0;
 
     if (need_rms) {
         add_metric(table, count, "audio_get_rms", ref_rms, FXP_TO_FLOAT(rms_q14, FXP_FRAC_AUDIO_INPUT));
     }
     if (need_max) {
         add_metric(table, count, "audio_get_max", ref_max, FXP_TO_FLOAT(max_q14, FXP_FRAC_AUDIO_INPUT));
-        add_metric(table, count, "audio_crest_factor", ref_crest, FXP_TO_FLOAT(crest_q16, FXP_PIPE_FRAC));
+        add_metric(table, count, "audio_crest_factor", ref_crest,
+                   audio_feat_to_float(fxp_feats[CREST_FACTOR], CREST_FACTOR));
     }
 
     free(centered);
@@ -734,6 +735,7 @@ int main(void)
                                         audio_features_selector,
                                         sig,
                                         audio_q14,
+                                        audio_fxp_feats,
                                         WINDOW_SAMP_AUDIO);
         add_audio_mel_kernel_metrics(audio_table, &audio_n,
                                      audio_features_selector,

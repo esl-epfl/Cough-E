@@ -12,12 +12,69 @@
 #include <core/fxp_log_exp.h>
 
 #if defined(FXP_MODE) && defined(FIXED_POINT)
+/* -------------------------------------------------------------------------- */
+/*  Audio RMS and crest factor                                                */
+/* -------------------------------------------------------------------------- */
 
+// RMS for centered audio, input is Q2.14 and output is UQ18.14.
+static uq18_14_t _rms_audio(const q2_14_t *sig, int16_t len, q18_14_t mean) {
+    if (len <= 0) return 0;
+
+    uint8_t energy_shift = 0;
+    uint16_t window_len = (uint16_t)len;
+    uq4_28_t energy_sum = 0;
+    int overflow = 0;
+    do {
+        energy_sum = 0;
+        overflow = 0;
+        for (int16_t i = 0; i < len; i++) {
+            q18_14_t cur = (q18_14_t)sig[i] - mean;
+            uq18_14_t abs_cur = (cur < 0) ? (uq18_14_t)(-cur) : (uq18_14_t)cur;
+            uq4_28_t energy = (abs_cur * abs_cur) >> energy_shift;
+            if (energy_sum > (UINT32_MAX - energy)) {
+                overflow = 1;
+                energy_shift += 2U;
+                break;
+            }
+            energy_sum += energy;
+        }
+    } while (overflow && energy_shift < 28U);
+
+    uq4_28_t mean_energy = energy_sum / window_len;
+    return fxp_sqrt32(mean_energy) << (energy_shift >> 1U);
+}
+
+void audio_crest_factor(const int8_t *features_selector, const int16_t *sig, int16_t len,
+                        fxp_feat_t *feats) {
+    if ((!features_selector[ROOT_MEANS_SQUARED] && !features_selector[CREST_FACTOR]) || len <= 0) {
+        return;
+    }
+
+    q18_14_t sum = 0;
+    for (int16_t i = 0; i < len; i++) {
+        sum += sig[i];
+    }
+
+    q18_14_t mean = sum / len;
+
+    uq18_14_t rms = _rms_audio(sig, len, mean);
+    if (features_selector[CREST_FACTOR]) {
+        q18_14_t peak = (q18_14_t)sig[0] - mean;
+        for (int16_t i = 1; i < len; i++) {
+            q18_14_t cur = (q18_14_t)sig[i] - mean;
+            if (cur > peak) peak = cur;
+        }
+
+        if (peak <= 0 || rms == 0U) return;
+
+        feats[CREST_FACTOR] = (fxp_feat_t)(((uq18_14_t)peak << FXP_PIPE_FRAC) / rms);
+    }
+}
 /* -------------------------------------------------------------------------- */
 /*  FFT feature kernels + block                                               */
 /* -------------------------------------------------------------------------- */
 
-#define FXP_FFT_ROLLOFF_95_Q16 ((uint32_t)62259U)
+#define FFT_ROLLOFF ((uint32_t)62259U)
 
 /* Frequency deviation from the spectral centroid.
  * Frequency is UQ12.20 and centroid is UQ11.21, so both are converted to Q13.19
@@ -36,7 +93,7 @@ static uq12_20_t _rolloff(const uq12_20_t *mags, const uq12_20_t *freqs, int16_t
                           uq15_17_t sum_mags) {
     // Add half a Q16 step before shifting so the 0.95 multiply rounds instead of flooring.
     uq15_17_t rolloff_energy =
-        (uq15_17_t)((((uint64_t)sum_mags * (uint64_t)FXP_FFT_ROLLOFF_95_Q16) + (1ULL << 15)) >> 16);
+        (uq15_17_t)((((uint64_t)sum_mags * (uint64_t)FFT_ROLLOFF) + (1ULL << 15)) >> 16);
 
     uq15_17_t sum = 0;
     for (int16_t i = 0; i < len; i++) {
@@ -309,23 +366,25 @@ static uq12_20_t _dominant_freq(const uq21_11_t *proxy, const uq12_20_t *freqs, 
  * Proxy input is UQ21.11, logs are Q21.11, and the output ratio is UQ0.16.
  */
 static uq0_16_t _flatness(const uq21_11_t *proxy, int16_t len) {
-    q21_11_t sum_logs = 0;
-    q21_11_t sum_proxy = 0;
+    int64_t sum_logs = 0;
+    uq21_11_t mean_proxy = 0;
 
     for (int16_t i = 0; i < len; i++) {
         uq21_11_t v = (proxy[i] == 0U) ? 1U : proxy[i];
         sum_logs += _log_psd(v);
-        sum_proxy += v;
+        uint32_t n = (uint32_t)i + 1U;
+        if (v >= mean_proxy) {
+            mean_proxy += (v - mean_proxy) / n;
+        } else {
+            mean_proxy -= (mean_proxy - v) / n;
+        }
     }
 
-    if (sum_proxy == 0U) return 0;
+    if (mean_proxy == 0U) return 0;
 
-    q5_11_t mean_log = (q5_11_t)(sum_logs / (int32_t)len);
-    q21_11_t mean_proxy = (q21_11_t)(sum_proxy / (uint32_t)len);
-    if (mean_proxy == 0U) mean_proxy = 1U;
-
+    q21_11_t mean_log = (q21_11_t)(sum_logs / (int32_t)len);
     q21_11_t log_mean_proxy = _log_psd(mean_proxy);
-    q5_11_t diff = (q5_11_t)((q21_11_t)mean_log - log_mean_proxy);
+    q5_11_t diff = (q5_11_t)(mean_log - log_mean_proxy);
     if (diff > 0) diff = 0;
     return _exp_psd((q5_11_t)diff);
 }
@@ -450,23 +509,20 @@ void audio_psd_features(const int8_t *features_selector, const int16_t *sig, int
         kiss_fftr(cfg, timedata, cx_out);
 
         for (int16_t i = 0; i < psd_len; i++) {
-            // Convert KissFFT output from Q2.30 to Q8.8.
             q8_8_t re = (q8_8_t)(cx_out[i].r >> 22);
             q8_8_t im = (q8_8_t)(cx_out[i].i >> 22);
             uq16_16_t re_2 = (uq16_16_t)((int32_t)re * (int32_t)re);
             uq16_16_t im_2 = (uq16_16_t)((int32_t)im * (int32_t)im);
-            uq16_16_t mag = (uq16_16_t)(re_2 + im_2);
-            uq21_11_t power = (uq21_11_t)(mag >> 5);
+            uq16_16_t mag = re_2 + im_2;
+            uq21_11_t power = (uq21_11_t)((mag) >> 5);
             acc_power[i] += power;
         }
 
         start = (int16_t)(start + hop);
     }
 
-    // Accumulated power becomes the PSD proxy; segment count and Hann gain
-    // cancel in every downstream feature, so no normalization is needed here.
     for (int16_t i = 0; i < psd_len; i++) {
-        proxy[i] = (uq21_11_t)acc_power[i];
+        proxy[i] = acc_power[i];
         uq12_20_t freq = (uq12_20_t)((((uint64_t)i * (uint64_t)fs) << 20U) / (uint64_t)NPERSEG);
         freqs[i] = freq;
     }
@@ -566,9 +622,8 @@ static uint16_t _mel_entropy(const uq20_44_t *row_power, int16_t n_frames) {
         if (rem >= (sum - rem) && p < UINT16_MAX) p++;
         if (p == 0U) continue;
 
-        q7_9_t ln_p =
-            (q7_9_t)((int32_t)_log_mel_power((uint64_t)p) -
-                     (16 * ((FXP_LN2_Q24 + (1 << 14)) >> 15)));
+        q7_9_t ln_p = (q7_9_t)((int32_t)_log_mel_power((uint64_t)p) -
+                               (16 * ((FXP_LN2_Q24 + (1 << 14)) >> 15)));
         if (ln_p > 0) ln_p = 0;
 
         int32_t prod = (int32_t)p * (int32_t)(-ln_p);
@@ -608,7 +663,6 @@ void audio_mel_features(const int8_t *features_selector, const int16_t *sig, int
     kiss_fft_scalar *timedata = (kiss_fft_scalar *)malloc((size_t)N_FFT * sizeof(kiss_fft_scalar));
     kiss_fft_cpx *cx_out = (kiss_fft_cpx *)malloc((size_t)FFT_RES_LEN * sizeof(kiss_fft_cpx));
     uq20_44_t *frame_power = (uq20_44_t *)malloc((size_t)FFT_RES_LEN * sizeof(uq20_44_t));
-    uint64_t *frame_power_entropy = (uint64_t *)malloc((size_t)FFT_RES_LEN * sizeof(uint64_t));
     uint64_t *mel_entropy_power =
         (uint64_t *)malloc((size_t)n_mels_needed * (size_t)n_frames * sizeof(uint64_t));
     // Pre-clip dB values can reach ~-200 dB, so the temp buffer is widened to
@@ -616,12 +670,11 @@ void audio_mel_features(const int8_t *features_selector, const int16_t *sig, int
     int32_t *mel_db = (int32_t *)malloc((size_t)n_mels_needed * (size_t)n_frames * sizeof(int32_t));
     kiss_fftr_cfg cfg = kiss_fftr_alloc(N_FFT, 0, 0, 0);
 
-    if (!timedata || !cx_out || !frame_power || !frame_power_entropy || !mel_entropy_power ||
+    if (!timedata || !cx_out || !frame_power || !mel_entropy_power ||
         !mel_db || !cfg) {
         free(timedata);
         free(cx_out);
         free(frame_power);
-        free(frame_power_entropy);
         free(mel_entropy_power);
         free(mel_db);
         free(cfg);
@@ -659,13 +712,6 @@ void audio_mel_features(const int8_t *features_selector, const int16_t *sig, int
             uq20_44_t im_2 = (uq20_44_t)((int64_t)im * (int64_t)im);
             uq20_44_t p = re_2 + im_2;
             frame_power[k] = p;
-
-            // Entropy is sensitive to tiny frame powers, so keep the full
-            // squared FFT bins for that path instead of the Q20.44 dB path.
-            int64_t re_full = (int64_t)cx_out[k].r;
-            int64_t im_full = (int64_t)cx_out[k].i;
-            frame_power_entropy[k] =
-                (uint64_t)(re_full * re_full) + (uint64_t)(im_full * im_full);
         }
 
         // Apply each sparse mel row. Basis weights are UQ1.15, so shift by 15.
@@ -675,16 +721,15 @@ void audio_mel_features(const int8_t *features_selector, const int16_t *sig, int
             int16_t end = fxp_mel_nz_indexes[mel_idx][1];
 
             uq20_44_t sum = 0;
-            uint64_t entropy_sum = 0;
+
             for (int16_t k = start; k <= end; k++) {
                 uq1_15_t w_q15 = fxp_mel_basis_q15[mel_idx][k - start];
                 sum += (frame_power[k] * (uint64_t)w_q15) >> FXP_MEL_BASIS_FRAC;
-                entropy_sum += ((frame_power_entropy[k] * (uint64_t)w_q15) + (1ULL << 6)) >> 7;
             }
 
             size_t idx = (size_t)m * (size_t)n_frames + (size_t)f;
             int32_t db = _mel_db(sum, MEL_DB_OFFSET);
-            mel_entropy_power[idx] = entropy_sum;
+            mel_entropy_power[idx] = sum;
             mel_db[idx] = db;
             if (db > max_db) max_db = db;
         }
@@ -720,8 +765,7 @@ void audio_mel_features(const int8_t *features_selector, const int16_t *sig, int
         uq14_18_t var = (uq14_18_t)((sum / n_frames) << 4);
         q7_9_t std = (q7_9_t)fxp_sqrt32(var);
 
-        uint32_t entrop =
-            _mel_entropy(&mel_entropy_power[(size_t)m * (size_t)n_frames], n_frames);
+        uint32_t entrop = _mel_entropy(&mel_entropy_power[(size_t)m * (size_t)n_frames], n_frames);
 
         int16_t mel_bin = idxs_needed[m];
         feats[MEL_FREQUENCY_CEPSTRAL_COEFFICIENT + mel_bin] = (fxp_feat_t)mean;
@@ -733,7 +777,6 @@ void audio_mel_features(const int8_t *features_selector, const int16_t *sig, int
     free(timedata);
     free(cx_out);
     free(frame_power);
-    free(frame_power_entropy);
     free(mel_entropy_power);
     free(mel_db);
     free(cfg);
@@ -797,7 +840,6 @@ int audio_mel_stage_probe(const int8_t *features_selector, const int16_t *sig, i
     if (!probe->frame_power || !probe->mel_power || !probe->mel_db_q9 || !frame_power_entropy ||
         !mel_entropy_power || !timedata || !cx_out || !cfg) {
         audio_mel_stage_probe_free(probe);
-        free(frame_power_entropy);
         free(mel_entropy_power);
         free(timedata);
         free(cx_out);
@@ -842,12 +884,6 @@ int audio_mel_stage_probe(const int8_t *features_selector, const int16_t *sig, i
             uq20_44_t p = re_2 + im_2;
             frame_power[k] = p;
 
-            // Preserve the full-power path for entropy while the probe keeps
-            // the Q20.44 mel power used by the dB stage checks.
-            int64_t re_full = (int64_t)cx_out[k].r;
-            int64_t im_full = (int64_t)cx_out[k].i;
-            frame_power_entropy[k] =
-                (uint64_t)(re_full * re_full) + (uint64_t)(im_full * im_full);
         }
 
         // Apply the requested mel rows and keep both mel power and dB.
@@ -861,13 +897,12 @@ int audio_mel_stage_probe(const int8_t *features_selector, const int16_t *sig, i
             for (int16_t k = start; k <= end; k++) {
                 uq1_15_t w_q15 = fxp_mel_basis_q15[mel_idx][k - start];
                 sum += (frame_power[k] * (uint64_t)w_q15) >> FXP_MEL_BASIS_FRAC;
-                entropy_sum += ((frame_power_entropy[k] * (uint64_t)w_q15) + (1ULL << 6)) >> 7;
             }
 
             size_t idx = (size_t)m * (size_t)n_frames + (size_t)f;
             int32_t db = _mel_db(sum, MEL_DB_OFFSET);
             probe->mel_power[idx] = sum;
-            mel_entropy_power[idx] = entropy_sum;
+            mel_entropy_power[idx] = esum;
             probe->mel_db_q9[idx] = db;
             if (db > max_db) max_db = db;
         }
@@ -909,7 +944,6 @@ int audio_mel_stage_probe(const int8_t *features_selector, const int16_t *sig, i
             _mel_entropy(&mel_entropy_power[(size_t)m * (size_t)n_frames], n_frames);
     }
 
-    free(frame_power_entropy);
     free(mel_entropy_power);
     free(timedata);
     free(cx_out);
