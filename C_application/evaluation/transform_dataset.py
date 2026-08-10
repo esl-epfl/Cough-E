@@ -62,10 +62,16 @@ def generate_audio_header(audio, audio_len, suffix, output_dir):
     with open(os.path.join(output_dir, filename), 'w') as f:
         f.write(f"#ifndef {guard}\n")
         f.write(f"#define {guard}\n\n\n")
+        f.write(f"#include <types.h>\n\n")
         f.write("/* Sampling frequency */\n")
         f.write(f"#define AUDIO_FS  {AUDIO_FS_TARGET}\n\n")
         f.write("/* Number of samples per each audiosignal */\n")
         f.write(f"#define AUDIO_LEN   {audio_len}\n\n\n")
+        f.write("#ifndef FXP_MODE\n")
+        f.write("#define AUDIO_INPUT_TYPE audio_data_t\n")
+        f.write("#else\n")
+        f.write("#define AUDIO_INPUT_TYPE float\n")
+        f.write("#endif\n\n")
         f.write("/* \n")
         f.write("\tThe samples are taken from two microphones, one facing the sking\n")
         f.write("\tthe other facing the air \n")
@@ -74,7 +80,7 @@ def generate_audio_header(audio, audio_len, suffix, output_dir):
         f.write("*/\n")
         f.write(f"typedef struct audio_input_{suffix}\n")
         f.write("{\n")
-        f.write("    float air[AUDIO_LEN];\n")
+        f.write("    AUDIO_INPUT_TYPE air[AUDIO_LEN];\n")
         f.write("} audio_input_t;\n\n")
         f.write("static const audio_input_t audio_in = {\n\n")
         f.write("\t{\n")
@@ -98,6 +104,7 @@ def generate_imu_header(imu_data, imu_len, suffix, output_dir):
     with open(os.path.join(output_dir, filename), 'w') as f:
         f.write(f"#ifndef {guard}\n")
         f.write(f"#define {guard}\n\n")
+        f.write(f"#include <types.h>\n\n")
         f.write("/* Sampling frequency of the IMU signal */\n")
         f.write(f"#define IMU_FS {IMU_FS}\n\n")
         f.write("/* \n")
@@ -118,7 +125,12 @@ def generate_imu_header(imu_data, imu_len, suffix, output_dir):
         f.write("\t\tGyroscope_r\n")
         f.write("\t}\n")
         f.write("*/\n\n")
-        f.write(f"static const float imu_in[IMU_LEN][6] = {{\n\n")
+        f.write("#ifndef FXP_MODE\n")
+        f.write("#define IMU_INPUT_TYPE imu_data_t\n")
+        f.write("#else\n")
+        f.write("#define IMU_INPUT_TYPE float\n")
+        f.write("#endif\n")
+        f.write(f"static const IMU_INPUT_TYPE imu_in[IMU_LEN][6] = {{\n\n")
 
         for i in range(imu_len):
             row = imu_data[i]
@@ -153,8 +165,9 @@ def generate_bio_header(bio_path, subj_id, output_dir):
     with open(filepath, 'w') as f:
         f.write(f"#ifndef {guard}\n")
         f.write(f"#define {guard}\n\n")
-        f.write(f"static const float gender = {int(gender)};\n")
-        f.write(f"static const float bmi = {bmi};\n\n")
+        f.write(f"#include <types.h>\n\n")
+        f.write(f"static const sreal_t gender = {int(gender)};\n")
+        f.write(f"static const sreal_t bmi = {bmi};\n\n")
         f.write("#endif\n")
 
     return filename
@@ -188,7 +201,9 @@ def transform_recording(subj_id, trial, mov, noise, sound, dataset_path, output_
     imu_file = f"imu_input_{suffix}.h"
     bio_file = f"bio_input_{subj_id}.h"
 
-    if os.path.exists(os.path.join(subj_dir, audio_file)):
+    if (os.path.exists(os.path.join(subj_dir, audio_file)) and
+            os.path.exists(os.path.join(subj_dir, imu_file)) and
+            os.path.exists(os.path.join(subj_dir, bio_file))):
         return suffix, f"{subj_id}/{audio_file}", f"{subj_id}/{imu_file}", f"{subj_id}/{bio_file}"
 
     # Load and downsample audio

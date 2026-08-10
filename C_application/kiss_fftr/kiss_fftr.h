@@ -3,36 +3,43 @@
 
 #include "kiss_fft.h"
 #ifdef __cplusplus
-extern "C" {
+extern "C++" {
 #endif
 
-    
-/* 
- 
+
+/*
+
  Real optimized version can save about 45% cpu time vs. complex fft of a real seq.
 
- 
- 
+
+
  */
 
-typedef struct kiss_fftr_state *kiss_fftr_cfg;
+template<typename T>
+struct kiss_fftr_state;
+
+template<typename T>
+using kiss_fftr_cfg = kiss_fftr_state<T>*;
 
 
-kiss_fftr_cfg kiss_fftr_alloc(int nfft,int inverse_fft,void * mem, size_t * lenmem);
+template<typename T>
+kiss_fftr_cfg<T> kiss_fftr_alloc(int nfft,int inverse_fft,void * mem, size_t * lenmem);
 /*
  nfft must be even
 
- If you don't care to allocate space, use mem = lenmem = NULL 
+ If you don't care to allocate space, use mem = lenmem = NULL
 */
 
 
-void kiss_fftr(kiss_fftr_cfg cfg,const kiss_fft_scalar *timedata,kiss_fft_cpx *freqdata);
+template<typename T>
+void kiss_fftr(kiss_fftr_cfg<T> cfg,const T *timedata,kiss_fft_cpx<T> *freqdata);
 /*
  input timedata has nfft scalar points
  output freqdata has nfft/2+1 complex points
 */
 
-void kiss_fftri(kiss_fftr_cfg cfg,const kiss_fft_cpx *freqdata,kiss_fft_scalar *timedata);
+template<typename T>
+void kiss_fftri(kiss_fftr_cfg<T> cfg,const kiss_fft_cpx<T> *freqdata,T *timedata);
 /*
  input freqdata has  nfft/2+1 complex points
  output timedata has nfft scalar points

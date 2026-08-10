@@ -1,66 +1,168 @@
-# Evaluation Pipeline
+# Evaluation pipeline
 
-This folder contains scripts for systematically evaluating the Cough-E C application against the test set (`full_dataset_test`). The pipeline automates the full process: converting dataset recordings into C header files, compiling and running the C application for each recording, parsing the output, and scoring the results using event-based metrics.
+This folder contains the scripts used to evaluate the Cough-E C application against the test dataset. The pipeline converts dataset recordings into C headers, compiles the C application, runs it for each recording, parses the emitted cough segments, and scores the output against ground truth.
 
-## Scripts
+Evaluation commands should be run from this folder:
 
-#### `transform_dataset.py`
-Converts WAV audio, CSV IMU, and JSON biodata files from the public dataset into C header files (`.h`) expected by the C application's `input_data/` directory. Uses `load_audio()` and `load_imu()` directly from `ML_methodology/src/helpers.py` to ensure identical data preparation as the Python ML pipeline. Generated files are organized into per-subject subfolders and are idempotent (skipped if already present).
+```sh
+cd C_application/evaluation
+```
 
-#### `evaluate.py`
-Full evaluation pipeline with multiple subcommands. For each recording, it updates `main.h` to point to the generated headers, compiles the C application, runs it, parses the output, and scores the predictions against ground truth using event-based scoring from the [timescoring](https://github.com/esl-epfl/epilepsy_performance_metrics) library with parameters matching `ML_methodology/config/scoring/default.yaml`:
+
+#### Scripts
+
+`transform_dataset.py` converts WAV audio, CSV IMU, and JSON biodata files into C headers expected by `../input_data`.
+
+The conversion uses the same `load_audio()` and `load_imu()` helpers as the Python ML pipeline so that the C application receives data prepared in the same way as the reference pipeline. Generated files are placed in per-subject subfolders and existing files are skipped.
+
+`evaluate.py` runs the end-to-end evaluation. For each recording, it updates the three input includes in `main.h`, compiles the requested C runtime, executes the application, parses `COUGH_SEG` output lines, and scores predictions with event-based metrics.
+
+`fxp/` contains the fixed-point stage harnesses used by `evaluate.py --mode fxp-error` and by progressive block evaluation. The harnesses compare fixed-point kernels against the floating-point reference code.
+
+
+#### Dataset location
+
+By default, `evaluate.py` expects the private test dataset at:
+
+```text
+Datasets/full_dataset_test
+```
+
+relative to the repository root. This default is resolved by the script, so it does not depend on the current working directory.
+
+To transform a dataset stored somewhere else, pass the path explicitly to `transform_dataset.py`. The main `evaluate.py` script currently uses the default dataset path.
+
+
+#### Transform input headers
+
+Transform all subjects:
+
+```sh
+python3 transform_dataset.py \
+  --dataset_path /path/to/full_dataset_test \
+  --output_dir ../input_data
+```
+
+Transform selected subjects:
+
+```sh
+python3 transform_dataset.py \
+  --dataset_path /path/to/full_dataset_test \
+  --output_dir ../input_data \
+  --subjects 55502 55503
+```
+
+
+#### End-to-end evaluation
+
+Run the floating-point C application:
+
+```sh
+python3 evaluate.py --mode float
+```
+
+`--mode float` is the default, so this is equivalent:
+
+```sh
+python3 evaluate.py
+```
+
+Run the fixed-point C application:
+
+```sh
+python3 evaluate.py --mode fxp --twiddle 32
+```
+
+Run the posit C application:
+
+```sh
+python3 evaluate.py --mode upos
+```
+
+The fixed-point runtime currently uses 32-bit KissFFT twiddles, so `--twiddle 32` is the supported setting.
+
+
+#### Progressive FxP evaluation
+
+Progressive evaluation replaces one feature block with fixed-point outputs while keeping the rest of the pipeline in the reference path. This is useful for isolating which block changes the final event metrics.
+
+Example:
+
+```sh
+python3 evaluate.py --fxp-block audio_mel
+```
+
+Supported blocks:
+
+```text
+audio_fft
+audio_psd
+audio_mel
+audio_scalar
+audio_all
+imu_raw
+imu_l2
+imu_all
+```
+
+`--fxp-block` is its own evaluation mode and should not be combined with `--mode fxp` or `--mode fxp-error`.
+
+
+#### Fixed-point kernel error
+
+The fixed-point error mode compares FxP kernels against the floating-point baseline and reports absolute deviations. RMSE and MaxAbs are not relative percentages.
+
+Run:
+
+```sh
+python3 evaluate.py --mode fxp-error
+```
+
+The stage harness emits accumulator rows like:
+
+```text
+FXP_KERNEL_ACC,block=audio,kernel=...,n=...,sum_sq_err=...,max_abs_err=...,nonfinite=...
+```
+
+`evaluate.py` aggregates those rows into per-kernel RMSE and MaxAbs values.
+
+
+#### Output files
+
+End-to-end modes write:
+
+- `results_float.csv` and `summary_float.json`
+- `results_fxp.csv` and `summary_fxp.json`
+
+Progressive block modes write:
+
+- `results_fxp_block_<block>.csv`
+- `summary_fxp_block_<block>.json`
+
+Fixed-point error mode prints kernel error summaries to stdout.
+
+
+#### Scoring parameters
+
+Event scoring uses the `timescoring` library with parameters matching `ML_methodology/config/scoring/default.yaml`.
 
 | Parameter | Value |
-|---|---|
+|---|---:|
 | `toleranceStart` | 0.25 s |
 | `toleranceEnd` | 0.25 s |
 | `minOverlap` | 0.125 |
 | `maxEventDuration` | 0.6 s |
 | `minDurationBetweenEvents` | 0 s |
 
-## Usage
 
-All commands are run from the repository root (`Cough-E/`).
+#### Dependencies
 
-#### Full pipeline (transform + evaluate, all subjects)
-```
-python C_application/evaluation/evaluate.py
-```
+The evaluation scripts require:
 
-#### Specific subjects only
-```
-python C_application/evaluation/evaluate.py full --subjects 14287 14342
-```
+- The private `full_dataset_test` dataset.
+- The Python ML helper modules under `ML_methodology/src`.
+- `timescoring` for event-based metrics.
+- `numpy` and `scipy` for data loading and preprocessing.
+- A local C compiler and `make`.
 
-#### Custom dataset path
-```
-python C_application/evaluation/evaluate.py full --dataset_path /path/to/full_dataset_test
-```
-
-#### Transform dataset only
-```
-python C_application/evaluation/transform_dataset.py --dataset_path /path/to/full_dataset_test --output_dir C_application/input_data
-```
-
-#### Run evaluation only (assumes headers already generated)
-```
-python C_application/evaluation/evaluate.py run --dataset_path /path/to/full_dataset_test
-```
-
-#### Aggregate metrics from an existing results CSV
-```
-python C_application/evaluation/evaluate.py aggregate --csv C_application/evaluation/results.csv
-```
-
-## Output files
-
-- `results.csv`: Per-recording results with event-based metrics (TP, FP, FN, SE, PR, F1)
-- `summary.json`: Aggregate and per-subject metrics summary
-
-## Dependencies
-
-The evaluation scripts rely on:
-- The private test dataset (`full_dataset_test`).
-- `ML_methodology/src/helpers.py` for data loading functions
-- The [timescoring](https://github.com/esl-epfl/epilepsy_performance_metrics) library for event-based scoring
-- `numpy`, `scipy` (used by helpers.py for audio decimation)
+The scripts temporarily modify `C_application/main.h` while evaluating recordings and restore it after the run.

@@ -1,0 +1,3 @@
+[submodule "C_application/universal"]
+	path = C_application/universal
+	url = https://github.com/stillwater-sc/universal
