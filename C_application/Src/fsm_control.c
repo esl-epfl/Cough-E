@@ -13,10 +13,10 @@ void init_state(){
 #endif
 
 fsm_state.model_cls_out = NON_COUGH_OUT;
-fsm_state.timestamp_last_out = 0.0;
-fsm_state.time_from_last_out = 0.0;
-fsm_state.time_start_wind = 0.0;
-fsm_state.time_start_last_wind = 0.0;
+fsm_state.last_output_tick = 0U;
+fsm_state.ticks_from_last_output = 0U;
+fsm_state.window_start_tick = 0U;
+fsm_state.last_window_start_tick = 0U;
 fsm_state.n_winds_aud = 0;
 
 }
@@ -25,43 +25,43 @@ fsm_state.n_winds_aud = 0;
 
 void update(){
 
-    fsm_state.time_start_last_wind = fsm_state.time_start_wind;
+    fsm_state.last_window_start_tick = fsm_state.window_start_tick;
 
     // COUGH found
     if(fsm_state.model_cls_out ==  COUGH_OUT){
         
         // IMU was used 
         if(fsm_state.model == IMU_MODEL){
-            fsm_state.time_from_last_out = fsm_state.time_start_wind + WIND_LEN_IMU - fsm_state.timestamp_last_out;
+            fsm_state.ticks_from_last_output = fsm_state.window_start_tick + IMU_WINDOW_TICKS - fsm_state.last_output_tick;
 
             #ifdef RUN_MIXED
             fsm_state.model = AUDIO_MODEL;      // Switch to AUDIO model
             #else
             #ifdef RUN_ONLY_IMU
-            fsm_state.time_start_wind += IMU_STEP_SEC;
+            fsm_state.window_start_tick += IMU_STEP_TICKS;
             #endif
             #endif
         }
         else{   // AUDIO was used
 
             fsm_state.n_winds_aud++;
-            fsm_state.time_from_last_out = fsm_state.time_start_wind + WIND_LEN_AUD - fsm_state.timestamp_last_out;
+            fsm_state.ticks_from_last_output = fsm_state.window_start_tick + AUDIO_WINDOW_TICKS - fsm_state.last_output_tick;
 
             #ifdef RUN_MIXED
             // Max number of windows to be processed by audio reached, switch back to IMU
             if(fsm_state.n_winds_aud >= N_MAX_WIND_AUD){
                 fsm_state.n_winds_aud = 0;
                 fsm_state.model = IMU_MODEL;
-                fsm_state.time_start_wind += WIND_LEN_AUD;  // Next window start from the end of the current one
+                fsm_state.window_start_tick += AUDIO_WINDOW_TICKS;  // Next window start from the end of the current one
             }
             else{
                 fsm_state.model = AUDIO_MODEL;
-                fsm_state.time_start_wind += AUDIO_STEP_SEC;
+                fsm_state.window_start_tick += AUDIO_STEP_TICKS;
             }
             #else
             
             #ifdef RUN_ONLY_AUD
-            fsm_state.time_start_wind += AUDIO_STEP_SEC;
+            fsm_state.window_start_tick += AUDIO_STEP_TICKS;
             #endif
             #endif
 
@@ -71,20 +71,20 @@ void update(){
 
         // IMU was used 
         if(fsm_state.model == IMU_MODEL){
-            fsm_state.time_from_last_out = fsm_state.time_start_wind + WIND_LEN_IMU - fsm_state.timestamp_last_out;
+            fsm_state.ticks_from_last_output = fsm_state.window_start_tick + IMU_WINDOW_TICKS - fsm_state.last_output_tick;
             fsm_state.model = IMU_MODEL;
-            fsm_state.time_start_wind += IMU_STEP_SEC;
+            fsm_state.window_start_tick += IMU_STEP_TICKS;
         }
         else{   // AUDIO was used
 
             #ifdef RUN_MIXED
             fsm_state.model = IMU_MODEL;
-            fsm_state.time_from_last_out = fsm_state.time_start_wind + WIND_LEN_AUD - fsm_state.timestamp_last_out;
-            fsm_state.time_start_wind += WIND_LEN_AUD;  // Next window start from the end of the current one
+            fsm_state.ticks_from_last_output = fsm_state.window_start_tick + AUDIO_WINDOW_TICKS - fsm_state.last_output_tick;
+            fsm_state.window_start_tick += AUDIO_WINDOW_TICKS;  // Next window start from the end of the current one
             #else
             #ifdef RUN_ONLY_AUD
-            fsm_state.time_from_last_out = fsm_state.time_start_wind + WIND_LEN_AUD - fsm_state.timestamp_last_out;
-            fsm_state.time_start_wind += AUDIO_STEP_SEC;
+            fsm_state.ticks_from_last_output = fsm_state.window_start_tick + AUDIO_WINDOW_TICKS - fsm_state.last_output_tick;
+            fsm_state.window_start_tick += AUDIO_STEP_TICKS;
             #endif
             #endif
         }
@@ -96,23 +96,23 @@ void update(){
 uint8_t check_postprocessing(){
 
     // printf(">> Checking post\n");
-    // printf("time from last: %f\n", fsm_state.time_from_last_out);
-    // printf("last out time: %f\n", fsm_state.timestamp_last_out);
+    // printf("ticks from last: %u\n", fsm_state.ticks_from_last_output);
+    // printf("last out tick: %u\n", fsm_state.last_output_tick);
 
-    if(fsm_state.time_from_last_out >= TIME_DEADLINE_OUTPUT){
+    if(fsm_state.ticks_from_last_output >= TIME_DEADLINE_OUTPUT_TICKS){
         
         if(fsm_state.model == IMU_MODEL){
-            fsm_state.timestamp_last_out = fsm_state.time_start_last_wind + WIND_LEN_IMU;
+            fsm_state.last_output_tick = fsm_state.last_window_start_tick + IMU_WINDOW_TICKS;
         } else {
-            fsm_state.timestamp_last_out = fsm_state.time_start_last_wind + WIND_LEN_AUD;
+            fsm_state.last_output_tick = fsm_state.last_window_start_tick + AUDIO_WINDOW_TICKS;
         }
 
-        fsm_state.time_from_last_out = 0.0;
+        fsm_state.ticks_from_last_output = 0U;
 
         // printf("\n");
-        // printf("time start: %f\n", fsm_state.time_start_last_wind);
-        // printf("time from last: %f\n", fsm_state.time_from_last_out);
-        // printf("last out time: %f\n", fsm_state.timestamp_last_out);
+        // printf("start tick: %u\n", fsm_state.last_window_start_tick);
+        // printf("ticks from last: %u\n", fsm_state.ticks_from_last_output);
+        // printf("last out tick: %u\n", fsm_state.last_output_tick);
 
 
         return 1;
@@ -125,9 +125,9 @@ uint8_t check_postprocessing(){
 uint32_t get_idx_window(){
 
     if(fsm_state.model == IMU_MODEL){
-        return (uint32_t)(fsm_state.time_start_wind * IMU_FS);
+        return (uint32_t)(((uint64_t)fsm_state.window_start_tick * IMU_FS) / AUDIO_FS);
     }
     else{
-        return (uint32_t)(fsm_state.time_start_wind * AUDIO_FS);
+        return fsm_state.window_start_tick;
     }
 }

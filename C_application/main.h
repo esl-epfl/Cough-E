@@ -2,12 +2,16 @@
 #define _MAIN_H_
 
 #include <inttypes.h>
+#include <core/fxp_core.h>
 
 //////////////////////////////////////
 /* Model to be used                 */
 //////////////////////////////////////
 #include <audio_model.h>            
 #include <imu_model.h>              
+#ifdef FXP_MODE
+#include <model_fxp.h>
+#endif
 //////////////////////////////////////
 
 
@@ -25,13 +29,17 @@
 
 
 /* Threshold for the audio model */
+#ifndef FXP_MODE
 #define AUDIO_TH    0.3
 
 /* Threshold for the imu model */
 #define IMU_TH    0.05
+#endif
 
-// Defines (in seconds) how often to provide the final estimation (execute post-processing)
-#define TIME_DEADLINE_OUTPUT    1.5
+// Defines how often to provide the final estimation, in audio-sample ticks.
+#define TIME_DEADLINE_OUTPUT_NUM    3U
+#define TIME_DEADLINE_OUTPUT_DEN    2U
+#define TIME_DEADLINE_OUTPUT_TICKS  ((uint32_t)(((uint64_t)TIME_DEADLINE_OUTPUT_NUM * AUDIO_FS) / TIME_DEADLINE_OUTPUT_DEN))
 
 // Maximum number of consecutive windows to be run by AUDIO model
 #define N_MAX_WIND_AUD  4
