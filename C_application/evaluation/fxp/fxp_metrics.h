@@ -1,4 +1,5 @@
-#pragma once
+#ifndef _FXP_METRICS_H_
+#define _FXP_METRICS_H_
 
 #include <math.h>
 #include <stdio.h>
@@ -45,3 +46,5 @@ static inline void fxp_metric_print_kernel_acc(const char *block,
            m->max_abs_err,
            m->nonfinite);
 }
+
+#endif /* _FXP_METRICS_H_ */

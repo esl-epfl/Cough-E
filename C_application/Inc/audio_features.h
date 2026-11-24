@@ -93,6 +93,13 @@ enum audio_features_families{
     Number_AUDIO_Features = ENERGY_ENVELOPE_PEAK_DETECT + N_EEPD// Hardcoded just to get the final length
 };
 
+/*
+ * Returns the number of fractional bits (Q-format) of the fixed-point carrier
+ * used by the audio feature at index `feature_idx`. Each feature family is
+ * quantized with its own Q-format, so this metadata is needed to interpret the
+ * raw fixed-point feature values (e.g. to compare them against the fixed-point
+ * model thresholds or to convert them back to float).
+ */
 static inline uint8_t audio_feature_frac_bits(uint16_t feature_idx)
 {
     if (feature_idx == SPECTRAL_ROLLOFF || feature_idx == DOMINANT_FREQUENCY) {

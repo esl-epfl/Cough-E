@@ -1,4 +1,5 @@
-#pragma once
+#ifndef _MODEL_FXP_H_
+#define _MODEL_FXP_H_
 
 #ifdef FXP_MODE
 
@@ -26,4 +27,6 @@ static inline uint8_t score_is_cough(fxp_q16_t score, fxp_q16_t threshold) {
     return (score >= threshold) ? 1U : 0U;
 }
 
-#endif
+#endif /* FXP_MODE */
+
+#endif /* _MODEL_FXP_H_ */

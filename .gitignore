@@ -30,13 +30,11 @@ C_application/evaluation/fxp/fxp_progressive_harness
 C_application/evaluation/fxp/fxp_progressive_harness_*
 C_application/evaluation/fxp/.fxp_stage_harness.build.lock
 
-# Range analysis output and scripts (FxP-Port branch only keeps the header)
-C_application/range_analysis/
+# Range analysis output
+C_application/range_analysis/range_results.csv
 
 # Local dataset
 datasets/
 
-# Overleaf docs
-C_application/OVERLEAF.md
-C_application/port.md
+# Private folder
 private/

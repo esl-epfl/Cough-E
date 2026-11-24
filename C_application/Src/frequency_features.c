@@ -19,7 +19,8 @@
 
 /*
     Helper function not callable externally.
-    Stores re/im as float (original behaviour).
+    This just computes the RFFT of the input signal and 
+    stores the Real and Imaginary parts in two separate arrays
 */
 void _rfft(const float *sig, int16_t len, float *real, float *imag);
 

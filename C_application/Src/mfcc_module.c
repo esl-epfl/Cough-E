@@ -24,18 +24,6 @@
 // internal use function to compute the dct on a linear array
 void _dct_linear(float *x, int16_t len, float *y);
 
-/*
- * Parked helper kept for the upcoming full FxP audio port.
- * It is intentionally disabled in the current mixed float/FxP bridge flow.
- */
-#if 0
-void _cmplx_mag(kiss_fft_cpx *x, int16_t len, float *res){
-    for(int16_t i=0; i<len; i++){
-        res[i] = sqrtf((x[i].r * x[i].r) + (x[i].i * x[i].i));
-    }
-}
-#endif
-
 void stft(const float *x, int16_t len, int16_t n_frames, float *res){
 
     RA_LOG_ARRAY("AUDIO_MEL", "stft", "sig_input", x, len);

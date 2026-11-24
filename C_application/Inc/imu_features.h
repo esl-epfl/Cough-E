@@ -85,6 +85,14 @@ enum imu_signal_features {
     Number_IMU_Features = GYRO_COMBO + Num_imu_feat_families
 };
 
+/*
+ * Returns the number of fractional bits (Q-format) of the fixed-point carrier
+ * used by the IMU feature at index `feature_idx`. The format depends on the
+ * signal (raw axis or L2-combined) and on the feature family, while the AZC
+ * features are plain integers (0 fractional bits). This metadata is needed to
+ * interpret the raw fixed-point feature values (e.g. to compare them against
+ * the fixed-point model thresholds or to convert them back to float).
+ */
 static inline uint8_t imu_feature_frac_bits(uint16_t feature_idx)
 {
     uint16_t base;
